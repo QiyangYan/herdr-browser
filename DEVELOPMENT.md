@@ -40,12 +40,15 @@ Download and verify the `v0` release, then extract its `client/herdr`. The packa
 requires the client hash recorded in `provenance.json`:
 
 ```bash
+git checkout v0
 python3 tools/build_release.py --client /path/to/verified/client/herdr
 ```
 
 The resulting archive and `SHA256SUMS` are under `dist/`, outside Git tracking.
 The packager includes an explicit source tree, not your home directory or
 runtime state. It normalizes archive metadata for repeatable packaging.
+Check out the tag when reproducing a release; `main` can contain later
+documentation or test updates.
 
 To test the installer without uploading:
 

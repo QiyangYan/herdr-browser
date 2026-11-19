@@ -56,7 +56,7 @@ browser cookies or reports.
 - A Browser toggle; closing the companion leaves Herdr tasks running.
 
 [Usage and report schema](docs/usage.md) ·
-[v0 visual release summary](docs/v0.html) ·
+[v0 visual release summary](https://qiyangyan.github.io/herdr-browser/v0.html) ·
 [validation and limitations](docs/validation.md)
 
 ## Updates and local state

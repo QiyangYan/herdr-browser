@@ -111,7 +111,11 @@ class NativeTests(unittest.TestCase):
     def test_switch_disposes_old_view_and_rejects_late_uri(self):
         first_key, old_view = self.window.key, self.window.view
         self.assertIsNotNone(old_view)
-        self.window.store.save_link(first_key, "https://example.com/one", "First")
+        # Keep page metadata deterministic; a live external site may update its
+        # title before this assertion on a faster network.
+        report = self.window.report_server.reports.update(first_key, {}, new_title="First")
+        url = self.window.report_server.task_url(first_key, report["id"])
+        self.window.store.save_link(first_key, url, "First")
         self.context["focused_tab_id"] = "t2"
         atomic_json(self.window.context_path, self.context)
         pump()

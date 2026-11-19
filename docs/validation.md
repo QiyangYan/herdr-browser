@@ -22,5 +22,10 @@ installer now explicitly installs `libglib2.0-bin`.
 
 Physical recipient desktops, other Linux releases, ARM, macOS and Windows
 remain unverified. The client is the recorded prebuilt snapshot; a new client
-build has not been proven byte-for-byte reproducible. Public download
-verification is recorded on the repository's main branch after publication.
+build has not been proven byte-for-byte reproducible. The exact public
+installation command also passed under a second fresh user without GitHub
+credentials; client and runtime hashes matched the recorded v0 provenance.
+
+The first GitHub run exposed a test depending on the timing of an external
+website title. The main branch uses a local page for that test; the application
+and immutable v0 assets are unchanged. The CI rerun is pending.

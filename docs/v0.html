@@ -128,7 +128,8 @@ thead{background:#edf1f5}tbody th{font-weight:600}tbody tr:nth-child(even){backg
 table,tbody,tr,th,td{display:block}thead{display:none}tbody tr{border-bottom:1px solid #bdc8d4;padding:8px 0}
 tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-label) ": ";font-weight:600}
 .bar-row{grid-template-columns:1fr 94px;gap:8px}.bar-label{grid-column:1 / -1}.bar-track{grid-column:1}}
-</style><style id="herdr-report-clarity">
+</style></head><body><main>
+<style>code{overflow-wrap:anywhere}</style><style id="herdr-report-clarity">
 *{box-sizing:border-box}
 strong{font-weight:700}
 p,li,td,th,figcaption{overflow-wrap:anywhere}
@@ -164,25 +165,25 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 .clarity-flow ol{flex-direction:column;gap:26px}
 .clarity-flow li:not(:last-child):after{content:"↓";right:50%;top:auto;bottom:-27px;transform:translateX(50%)}
 }
-</style></head><body><main>
+</style>
 <p><a href="https://github.com/QiyangYan/herdr-browser">Open the source repository</a></p>
 <h1>Herdr Browser v0</h1>
-<p><strong>Status:</strong> v0 passed its installation and browser checks; the public release is ready.</p>
-<p class="status">Recorded 2026-11-19T02:27:33+00:00 · Ubuntu 22.04 x86_64</p>
+<p><strong>Status:</strong> v0 is public and its one-command installation passed with a fresh user profile.</p>
+<p class="status">Recorded 2026-11-19T02:31:57+00:00 · Ubuntu 22.04 x86_64</p>
 <figure class="flow-diagram"><h2>One release, separate personal workspaces</h2><ol class="flow-steps"><li><strong>Current browser</strong><span>The recorded Herdr 0.9.3 client and reusable installed companion features.</span></li><li><strong>Public v0</strong><span>A versioned installer, source, workflow template and checksums; private task data excluded.</span></li><li><strong>Your workspace</strong><span>Task-linked websites and reports, with your own tasks, agents and sign-ins.</span></li></ol><figcaption>Arrows show how the current app becomes an installable release, not measured performance.</figcaption></figure>
 <h2>Install the same app with one command</h2>
 <pre style="white-space:pre-wrap;overflow-wrap:anywhere"><code>curl -fsSL https://raw.githubusercontent.com/QiyangYan/herdr-browser/v0/install.sh | bash</code></pre>
 <p>Add <code>-s -- --codex</code> after <code>bash</code> to install the Codex browser workflow too.</p>
 <p><strong>Scope:</strong> v0 supports Ubuntu 22.04 desktops on x86_64. Other operating systems and physical recipient desktops have not been verified. System package installation may request sudo.</p>
 <h2>Verification recorded for v0</h2>
-<table data-clarity-table><thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody><tr><th>Unit tests</th><td data-label="Status">Passed</td><td data-label="Evidence">69 tests: task ownership, routing, reports, figures, instruction merge and rollback.</td></tr><tr><th>Native UI</th><td data-label="Status">Passed</td><td data-label="Evidence">40 contracts on private Xvfb: task switching, one live view, reports, clipboard and zoom.</td></tr><tr><th>Real Herdr compatibility</th><td data-label="Status">Passed</td><td data-label="Evidence">Two patched clients on the original 0.9.3 server; external routing, reports and in-app update.</td></tr><tr><th>Clean installation</th><td data-label="Status">Passed</td><td data-label="Evidence">Fresh Ubuntu 22.04 user, automatic dependencies including gio, launcher and preserved Codex instructions.</td></tr><tr><th>Installer failure handling</th><td data-label="Status">Passed</td><td data-label="Evidence">Repeat install, prefix with spaces, backup, corrupt download and unsafe archive rejection.</td></tr><tr><th>Release overview</th><td data-label="Status">Passed</td><td data-label="Evidence">Rendered at 1280 px and 375 px; expanded sections have no horizontal overflow.</td></tr></tbody></table>
-<p><strong>Next action:</strong> Publish v0 and verify the installation command from GitHub.</p>
+<table data-clarity-table><thead><tr><th>Check</th><th>Status</th><th>Evidence</th></tr></thead><tbody><tr><th>Unit tests</th><td data-label="Status">Passed</td><td data-label="Evidence">69 tests: task ownership, routing, reports, figures, instruction merge and rollback.</td></tr><tr><th>Native UI</th><td data-label="Status">Passed</td><td data-label="Evidence">40 contracts on private Xvfb: task switching, one live view, reports, clipboard and zoom.</td></tr><tr><th>Real Herdr compatibility</th><td data-label="Status">Passed</td><td data-label="Evidence">Two patched clients on the original 0.9.3 server; external routing, reports and in-app update.</td></tr><tr><th>Clean installation</th><td data-label="Status">Passed</td><td data-label="Evidence">Fresh Ubuntu 22.04 user, automatic dependencies including gio, launcher and preserved Codex instructions.</td></tr><tr><th>Installer failure handling</th><td data-label="Status">Passed</td><td data-label="Evidence">Repeat install, prefix with spaces, backup, corrupt download and unsafe archive rejection.</td></tr><tr><th>Release overview</th><td data-label="Status">Passed</td><td data-label="Evidence">Rendered at 1280 px and 375 px; expanded sections have no horizontal overflow.</td></tr><tr><th>Public GitHub install</th><td data-label="Status">Passed</td><td data-label="Evidence">Exact --codex command ran as a second fresh user without GitHub credentials; client and all recorded runtime hashes matched.</td></tr><tr><th>GitHub CI</th><td data-label="Status">Rerun pending</td><td data-label="Evidence">Local checks passed. Replaced one live-website test fixture with a deterministic local page after the first CI run.</td></tr></tbody></table>
+<p><strong>Next action:</strong> Use the install command on Ubuntu 22.04 x86_64; the independent CI rerun is pending.</p>
 <details id="choices"><summary>What is preserved, and what is excluded</summary>
 <p><strong>Preserved:</strong> task-owned websites, native terminal/browser, living reports, interactive figures, review markers and desktop browser defaults.</p>
 <p><strong>Excluded:</strong> personal tasks, report data, cookies, credentials and adapters tied to private tasks. Firefox site exceptions are configurable.</p>
 <p><strong>Tradeoff:</strong> a prebuilt client avoids a compiler setup, but this first release supports one Linux platform. The upstream patch and source remain available for inspection.</p>
 </details>
-<details id="versions"><summary>Version history and provenance</summary><ul><li><strong>Upstream:</strong> Herdr v0.9.3, commit <code>7b116c05bfda646af39d2524c54e70c751f57ee8</code>.</li><li><strong>Public source:</strong> commit <code>ad2114158eca31ae335cd5029575d1351d322496</code>.</li><li><strong>v0:</strong> Prepared; publication and public download verification follow.</li></ul>
+<details id="versions"><summary>Version history and provenance</summary><ul><li><strong>Upstream:</strong> Herdr v0.9.3, commit <code>7b116c05bfda646af39d2524c54e70c751f57ee8</code>.</li><li><strong>Public source:</strong> commit <code>ad2114158eca31ae335cd5029575d1351d322496</code>.</li><li><strong>v0:</strong> Published on GitHub; anonymous installation verified.</li><li><strong>v0 tag:</strong> <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li></ul>
 <p>See <a href="https://github.com/QiyangYan/herdr-browser/blob/v0/herdr_browser/provenance.json">source and client hashes</a>
 and the <a href="https://github.com/QiyangYan/herdr-browser/releases/tag/v0">versioned release and checksums</a>.</p></details>
 </main></body></html><script id="herdr-figure-inspection">/* Portable measured-curve renderer. No external libraries or inferred timestamps. */

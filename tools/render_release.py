@@ -35,7 +35,10 @@ def render(source_commit=""):
     versions += ("<li><strong>Public source:</strong> commit <code>" + source_commit + "</code>.</li>"
                  if source_commit else "<li><strong>Public source:</strong> uncommitted packaging work.</li>")
     versions += "<li><strong>v0:</strong> " + esc(records["release_status"]) + "</li>"
+    if records.get("release_commit"):
+        versions += "<li><strong>v0 tag:</strong> <code>" + esc(records["release_commit"]) + "</code>.</li>"
     body = f"""
+<style>code{{overflow-wrap:anywhere}}</style>
 <p><a href="https://github.com/QiyangYan/herdr-browser">Open the source repository</a></p>
 <h1>Herdr Browser v0</h1>
 <p><strong>Status:</strong> {esc(records['headline'])}</p>
