@@ -551,7 +551,12 @@ class NativeTests(unittest.TestCase):
         self.window.next_update_check = 0
         self.window.check_updates()
         self.assertFalse(self.window.update_button.get_sensitive())
+        previous_stat = source.stat()
         source.write_text("new")
+        # The two same-size writes can share a filesystem timestamp on CI.
+        # Give the simulated update a distinct recorded modification time.
+        os.utime(source, ns=(previous_stat.st_atime_ns,
+                            previous_stat.st_mtime_ns + 1_000_000_000))
         self.window.next_update_check = 0
         self.window.check_updates()
         self.assertTrue(self.window.update_button.get_sensitive())

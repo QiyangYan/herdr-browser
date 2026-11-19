@@ -27,5 +27,7 @@ installation command also passed under a second fresh user without GitHub
 credentials; client and runtime hashes matched the recorded v0 provenance.
 
 The first GitHub run exposed a test depending on the timing of an external
-website title. The main branch uses a local page for that test; the application
-and immutable v0 assets are unchanged. The CI rerun is pending.
+website title, and a subsequent run exposed two same-size fixture writes sharing
+a filesystem timestamp. The main branch uses a local page and an explicit
+fixture timestamp. The application and immutable v0 assets are unchanged.
+The CI rerun is pending.

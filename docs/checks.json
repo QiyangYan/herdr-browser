@@ -1,5 +1,5 @@
 {
-  "snapshot_utc": "2026-11-19T02:31:57+00:00",
+  "snapshot_utc": "2026-11-19T02:35:56+00:00",
   "headline": "v0 is public and its one-command installation passed with a fresh user profile.",
   "release_status": "Published on GitHub; anonymous installation verified.",
   "next_action": "Use the install command on Ubuntu 22.04 x86_64; the independent CI rerun is pending.",
@@ -42,7 +42,7 @@
     {
       "check": "GitHub CI",
       "status": "Rerun pending",
-      "evidence": "Local checks passed. Replaced one live-website test fixture with a deterministic local page after the first CI run."
+      "evidence": "Local checks passed. CI fixtures now use a local page and an explicit file timestamp; application code is unchanged."
     }
   ],
   "release_commit": "6e30065aacf65875251f439cd4c9612709f761c9"
