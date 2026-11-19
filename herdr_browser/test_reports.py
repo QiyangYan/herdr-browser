@@ -83,12 +83,37 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(json.loads(self.get(url + "/data"))["state"]["revision"], 1)
         self.assertEqual(len(json.loads(self.get(url + "/history"))), 1)
         etag = f'"{self.owner}-{state["id"]}-1"'
-        with self.assertRaises(HTTPError) as result:
-            urlopen(Request(url + "/data", headers={"If-None-Match": etag}), timeout=3)
+        with patch("herdr_browser.reports.task_body", side_effect=AssertionError("Unchanged page rendered")):
+            with self.assertRaises(HTTPError) as result:
+                urlopen(Request(url + "/data", headers={"If-None-Match": etag}), timeout=3)
         self.assertEqual(result.exception.code, 304)
         with self.assertRaises(HTTPError) as result:
             self.get(url.replace(self.server.config["token"], "wrong-token"))
         self.assertEqual(result.exception.code, 404)
+
+    def test_navigation_cache_tracks_external_changes_without_reading_unchanged_measurements(self):
+        from .reports import conclusion_token
+        first = self.reports.update(self.owner, {"summary": "Initial"}, goal="main", new_title="Main")
+        self.reports.update(self.owner, {"parent": "main", "section_title": "Evidence"}, goal="child")
+        rows = self.server.reports.navigation()
+        main = next(row for row in rows if row["id"] == "main")
+        self.assertEqual(conclusion_token(main), conclusion_token(first))
+        self.assertNotIn("sections", main)
+        self.assertNotIn("curves", main)
+        # The warm path reads revision metadata, without decoding saved JSON.
+        with patch("herdr_browser.reports.json.loads", side_effect=AssertionError("Unchanged state decoded")):
+            self.assertEqual(self.server.reports.navigation(), rows)
+        external = Reports(self.tmp.name)
+        external.update(self.owner, {"summary": "Changed", "status": "done"}, goal="main")
+        changed = next(row for row in self.server.reports.navigation() if row["id"] == "main")
+        self.assertEqual(changed["status"], "done")
+        self.assertNotEqual(conclusion_token(changed), conclusion_token(main))
+        with external.connect() as db:
+            db.execute("DELETE FROM goals WHERE owner=? AND id=?", (self.owner, "child"))
+        self.assertEqual([row["id"] for row in self.server.reports.navigation()], ["main"])
+        # A caller adding derived navigation fields must not contaminate the cache.
+        changed["title"] = "Not a saved title"
+        self.assertEqual(self.server.reports.navigation()[0]["title"], "Main")
 
     def test_session_index_preserves_conclusions_and_excludes_archived_and_other_sessions(self):
         state = self.reports.update(self.owner, {"next_action": "Inspect output", "current_task": "Inspect output"}, new_title="Active")

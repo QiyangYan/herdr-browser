@@ -283,6 +283,8 @@ class Reports:
                     owner TEXT PRIMARY KEY, goal TEXT NOT NULL);
             """)
         self.path.chmod(0o600)
+        self._navigation_cache = {}
+        self._navigation_lock = threading.Lock()
 
     def connect(self):
         return sqlite3.connect(str(self.path), timeout=10)
@@ -319,6 +321,28 @@ class Reports:
                               + ("WHERE owner=? " if owner else "") + "ORDER BY updated DESC,id",
                               (owner,) if owner else ()).fetchall()
         return [self.unpack(row[0], row[1], row[2:]) for row in rows]
+
+    def navigation(self):
+        """Read small navigation records; decode a report only when it changes."""
+        fields = ("title", "summary", "results", "current_task", "status", "parent", "section_title")
+        with self._navigation_lock, self.connect() as db:
+            # Metadata and changed states must come from the same snapshot.
+            db.execute("BEGIN")
+            rows = db.execute("SELECT owner,id,revision,updated FROM goals "
+                              "ORDER BY updated DESC,id").fetchall()
+            current = {}
+            for owner, goal, revision, updated in rows:
+                key = (owner, goal, revision, updated)
+                record = self._navigation_cache.get(key)
+                if record is None:
+                    raw = db.execute("SELECT state FROM goals WHERE owner=? AND id=?",
+                                     (owner, goal)).fetchone()[0]
+                    state = json.loads(raw)
+                    record = {field: state[field] for field in fields if field in state}
+                    record.update(owner=owner, id=goal, revision=revision, updated=updated)
+                current[key] = record
+            self._navigation_cache = current
+            return [dict(record) for record in current.values()]
 
     @staticmethod
     def write_state(db, owner, goal, state):
@@ -1140,7 +1164,7 @@ class ReportServer:
                    if row.get("connection") and session_id(row) == session}
         if not members:
             return None
-        all_goals = self.reports.list()
+        all_goals = self.reports.navigation()
         goals = [dict(goal) for goal in all_goals if not goal.get("parent")]
         for goal in goals:
             goal["subplans"] = [{"id": child["id"], "title": child.get("section_title") or child["title"]}
@@ -1218,10 +1242,15 @@ class ReportServer:
             def log_message(self, *args):
                 pass
 
-            def send(self, body, content_type="text/html; charset=utf-8", etag=None):
+            def not_modified(self, etag):
                 if etag and self.headers.get("If-None-Match") == etag:
                     self.send_response(304)
                     self.end_headers()
+                    return True
+                return False
+
+            def send(self, body, content_type="text/html; charset=utf-8", etag=None):
+                if self.not_modified(etag):
                     return
                 body = body.encode()
                 self.send_response(200)
@@ -1326,10 +1355,13 @@ class ReportServer:
                             token = conclusion_token(main)
                             mark = row.get("conclusion_marks", {}).get(main["id"], {})
                             mark = mark if mark.get("token") == token else {}
+                            etag = (f'"{owner}-{main["id"]}-{main["revision"]}'
+                                    + (f'-{mark["mode"]}' if mark else "") + '"')
+                            if self.not_modified(etag):
+                                return
                             self.send(json.dumps({"state": main, "html": task_body(main),
                                       "review": {"token": token, "mark": mark, "persistent": True}}),
-                                      "application/json", f'"{owner}-{main["id"]}-{main["revision"]}'
-                                      + (f'-{mark["mode"]}' if mark else "") + '"')
+                                      "application/json", etag)
                         elif parts[3] == "updates":
                             query = parse_qs(path.query)
                             before = json.loads(query["before"][0]) if "before" in query else None

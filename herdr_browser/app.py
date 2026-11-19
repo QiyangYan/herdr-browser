@@ -629,7 +629,7 @@ class BrowserWindow(Gtk.Window):
                 self.section = section
                 if not same:
                     self.restore_view(False)
-                self.refresh_link_location(url)
+                self.refresh_link_location(url, retry=True)
                 self.report("")
             else:
                 self.report("Waiting for this window's Herdr task before opening the website.")
@@ -637,11 +637,15 @@ class BrowserWindow(Gtk.Window):
             self.report(f"Website could not open: {error}")
         return False
 
-    def refresh_link_location(self, url):
+    def refresh_link_location(self, url, retry=False):
         """Apply anchors/report refresh versions inside the existing tab."""
         if self.view:
             current = self.view.get_uri() or ""
-            if current and current != url and url_identity(current) == url_identity(url):
+            failed = getattr(self.view, "_herdr_failed_url", None)
+            if retry and failed and url_identity(failed) == url_identity(url):
+                self.view._herdr_failed_url = None
+                self.view.load_uri(url)
+            elif current and current != url and url_identity(current) == url_identity(url):
                 self.view.load_uri(url)
 
     def report(self, message):
@@ -1027,12 +1031,16 @@ class BrowserWindow(Gtk.Window):
 
     def load_failed(self, view, event, uri, error, key):
         if view is self.view and key == self.key:
+            # WebKit's error document can emit another STARTED event. Keep
+            # this marker until an explicit retry rather than clearing it there.
+            view._herdr_failed_url = uri
             self.report(f"Page could not load: {error.message}")
         return False
 
     def web_terminated(self, view, reason, key):
         if view is self.view and key == self.key:
-            self.report("Browser process stopped. Use Reload or turn Browser off and on.")
+            view._herdr_failed_url = view.get_uri()
+            self.report("Browser process stopped. Click the page link again or use Reload.")
 
     def back(self, *args):
         if self.view:
@@ -1045,6 +1053,7 @@ class BrowserWindow(Gtk.Window):
     def reload(self, *args):
         if self.view:
             self.report("")
+            self.view._herdr_failed_url = None
             self.view.reload()
         elif self.key:
             self.restore_view()

@@ -538,7 +538,42 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.javascript("String(kept.row.querySelector('.sd-remove').hidden)"), "true")
         self.assertEqual(self.javascript("document.querySelector('#task-content').dataset.revision"), "2")
         self.assertAlmostEqual(float(self.javascript("String(scrollY)")), position, delta=2)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "2")
+        self.javascript("document.querySelector('#evidence').open=true; 'opened'")
+        pump(.2)
         self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "3")
+
+    def test_closed_appendix_chart_uses_latest_data_when_opened_and_reopened(self):
+        reports = self.window.report_server.reports
+        curve = {"title": "Appendix measurements", "caption": "Synthetic fixture.",
+                 "x_label": "Updates", "y_label": "Score", "x_maximum": 3,
+                 "y_maximum": 1, "gap": 1,
+                 "series": [{"label": "Fixture", "points": [{"x": 1, "y": .5}]}]}
+        def publish(count):
+            points = [{"x": i + 1, "y": .5} for i in range(count)]
+            reports.update(self.window.key, {"summary": "Read [details](#measurements).",
+                "sections": [{"id": "measurements", "title": "Measurements", "text": "Recorded data.",
+                              "curves": [dict(curve, series=[{"label": "Fixture", "points": points}])]}]},
+                goal="deferred", new_title="Deferred chart" if count == 1 else None)
+        publish(1)
+        self.window.home()
+        pump(.7)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "0")
+        publish(2)
+        pump(3.4)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "0")
+        self.javascript("location.hash='curve-measurements-1'; 'open exact chart'")
+        pump(.3)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-series circle').length)"), "2")
+        self.javascript("window.chartHolder=document.querySelector('.ic-holder'); document.querySelector('#measurements').open=false; 'closed'")
+        pump(.2)
+        publish(3)
+        pump(3.4)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-series circle').length)"), "2")
+        self.javascript("document.querySelector('#measurements').open=true; 'reopened'")
+        pump(.3)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-series circle').length)"), "3")
+        self.assertEqual(self.javascript("String(chartHolder===document.querySelector('.ic-holder'))"), "true")
 
     def test_report_refresh_adds_removes_and_reorders_rows_and_sections(self):
         reports = self.window.report_server.reports
@@ -634,6 +669,37 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.window.section, "Review")
         self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
         self.assertNotIn("Different section", self.window.store.task(self.window.key)["sections"])
+
+    def test_terminal_click_retries_a_page_that_previously_failed_to_load(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.end_headers()
+                self.wfile.write(b"<title>Recovered report</title><p>Available now</p>")
+        # Reserve a port without listening, so the first navigation fails.
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler, bind_and_activate=False)
+        server.server_bind()
+        self.addCleanup(server.server_close)
+        url = f"http://127.0.0.1:{server.server_address[1]}/report"
+        self.window.open_terminal_url(url, self.window.key)
+        pump(.8)
+        view, page = self.window.view, self.window.active_page
+        self.assertIn("Page could not load", self.window.message.get_text())
+        server.server_activate()
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        event = self.terminal_link_event(url, url)
+        click_native_terminal(event)
+        pump(.8)
+        self.assertEqual(self.window.view.get_title(), "Recovered report")
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.window.active_page, page)
+        self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
 
     def test_terminal_drag_and_shift_selection_do_not_open_url(self):
         url = "http://127.0.0.1:9/selection"

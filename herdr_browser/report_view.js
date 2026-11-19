@@ -936,12 +936,14 @@ figure[id]{scroll-margin-top:24px}
       '</figcaption></figure>').join('');
     return curves + tables + figures + flows;
   }
-  function interactiveVisuals(state) {
-    emphasizeExistingText();
+  function interactiveCurves(state) {
     const colors=['#59636f','#2263bd','#08775e','#9a4eb3','#9a4b56','#537684','#a06a00','#6633cc'];
     const charts=[...(state?.curves||[]),...(state?.main_sections||[]).flatMap(s=>s.curves||[]),
                   ...(state?.sections||[]).flatMap(s=>s.curves||[])];
     root.querySelectorAll('figure.learning-curve').forEach((figure,index)=>{
+      // Closed appendices retain their recorded data without building or
+      // redrawing interactive charts the reader cannot currently see.
+      if (figure.closest('details:not([open])')) return;
       let holder=figure.querySelector('.ic-holder');
       if(holder && figure._curveSource === figure.dataset.chart)return;
       let chart;
@@ -956,6 +958,13 @@ figure[id]{scroll-margin-top:24px}
       figure._curveKey ||= location.pathname+':'+chart.title+':'+index;
       InteractiveCurve.mount(holder,{...chart,markers:true,series:chart.series.map((s,i)=>({...s,color:colors[i%colors.length]}))},figure._curveKey);
     });
+  }
+  root.addEventListener('toggle', event => {
+    if (event.target.tagName === 'DETAILS' && event.target.open) interactiveCurves();
+  }, true);
+  function interactiveVisuals(state) {
+    emphasizeExistingText();
+    interactiveCurves(state);
     root.querySelectorAll('.bar-row').forEach(row=>{
       const units=row.closest('figure')?.querySelector('.axis-note')?.textContent.trim() || '';
       row.title=row.textContent.trim()+(units?' · '+units:'');row.tabIndex=0;row.setAttribute('aria-label',row.title);
@@ -1160,10 +1169,13 @@ figure[id]{scroll-margin-top:24px}
       'Load earlier updates</button></details>';
     return body;
   }
-  function showAnchor() {
+  let resolvedAnchor = null;
+  function showAnchor(force = true) {
     let id;
     try { id = decodeURIComponent(location.hash.slice(1)); } catch (_) { return; }
     const node = document.getElementById(id);
+    if (!force && node === resolvedAnchor) return;
+    resolvedAnchor = node;
     for (let current = node; current && current !== root; current = current.parentElement) {
       if (current.tagName === 'DETAILS') current.open = true;
     }
@@ -1353,7 +1365,6 @@ figure[id]{scroll-margin-top:24px}
       const expectedCitations = ['summary','results','plan','next_action'].reduce((n,key) => n+referenceIds(data.state[key]).length,0) +
         (data.state.main_sections || []).reduce((n,row) => n+referenceIds(row.text).length,0);
       const citationUpgrade = expectedCitations !== root.querySelectorAll('.appendix-citation').length;
-      interactiveVisuals(data.state);
       if (!oldLayout && !groupUpgrade && !curveUpgrade && !diagramUpgrade && !flowUpgrade && !proseUpgrade && !listUpgrade && !appendixUpgrade && !mainUpgrade && !objectiveUpgrade && !progressUpgrade && !citationUpgrade && String(data.state.revision) === root.dataset.revision) return;
       const y = scrollY, focusedNode = document.activeElement, focused = focusedNode?.id;
       const open = Array.from(root.querySelectorAll('details[open]')).map(node => node.id);
@@ -1383,7 +1394,7 @@ figure[id]{scroll-margin-top:24px}
         root.querySelector('#refresh-history').hidden = false;
       } else { cursor = null; historyLoaded = false; }
       open.forEach(id => { const node = document.getElementById(id); if (node) node.open = true; });
-      showAnchor();
+      showAnchor(false);
       if (focusedNode?.isConnected) focusedNode.focus?.({preventScroll:true});
       else if (focused && document.getElementById(focused)) document.getElementById(focused).focus({preventScroll:true});
       scrollTo(0, y);
