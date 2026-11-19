@@ -168,7 +168,7 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 <p><a href="https://github.com/QiyangYan/herdr-browser">Back to Herdr Browser</a></p>
 <h1>Steady report refresh</h1>
 <p><strong>Implemented and verified:</strong> new report data updates sections and charts in place.</p>
-<p class="status">Recorded 2026-11-19T09:40:52+00:00</p>
+<p class="status">Recorded 2026-11-19T09:41:36+00:00</p>
 <figure class="flow-diagram"><h2>Update the report without rebuilding its view</h2><ol class="flow-steps"><li><strong>Saved data changes</strong><span>The existing report and dashboard polls detect the update.</span></li><li><strong>Keep sections and controls</strong><span>Preserve the report, chart layout, open details and current inputs.</span></li><li><strong>Update changed content</strong><span>Refresh text, status and measured curves inside the existing view.</span></li></ol><figcaption>Arrows show the update sequence. Polling continues at its existing cadence.</figcaption></figure>
 <h2>The first fix covered only the dashboard</h2>
 <p>The dashboard stayed mounted, but new measurements still replaced the surrounding report and plots.
@@ -190,7 +190,7 @@ without changing the server API or stored records.</p>
 <li><strong>v0:</strong> original release, <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li>
 <li><strong>Shared dashboard:</strong> <code>e998eeeb10b32e4a03fd47716536425bba77df75</code>.</li>
 <li><strong>Dashboard-only fix:</strong> <code>3ea97d64c642ae6925e7e81da7d4151d517f16dd</code>. Its focused check passed, but flashing remained elsewhere in the report.</li>
-<li><strong>Report-wide refresh:</strong> Uncommitted working-tree changes.</li>
+<li><strong>Report-wide refresh:</strong> Source commit: <code>069aca37998b07fe9548734c5b1948d183db6f31</code>.</li>
 </ul>
 </details>
 </main></body></html><script id="herdr-figure-inspection">/* Portable measured-curve renderer. No external libraries or inferred timestamps. */
