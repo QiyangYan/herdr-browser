@@ -917,10 +917,10 @@ class BrowserWindow(Gtk.Window):
 
     def refresh_home(self):
         if self.view and self.key and self.showing_home:
-            content = task_home(self.store.task(self.key), self.section)
-            if content != self.home_html:
-                self.home_html = content
-                self.view.load_html(content, None)
+            url = self.report_server.task_url(self.key, "start")
+            if url != self.home_html:
+                self.home_html = url
+                self.view.load_uri(url)
 
     def open_firefox_url(self, url):
         try:
@@ -967,6 +967,15 @@ class BrowserWindow(Gtk.Window):
             self.address.set_text(uri)
             try:
                 parsed = self.report_server.parse_url(uri)
+                if parsed == {"kind": "task", "owner": key, "goal": "start"}:
+                    # The automatic empty-task dashboard is Home, not an extra
+                    # saved website. Keep New page and tab counts unchanged.
+                    self.showing_home = True
+                    self.active_page = None
+                    self.report_location = parsed
+                    self.address.set_text("")
+                    self.refresh_pages()
+                    return
                 # Provisional URI notifications can precede navigation policy.
                 # Keep the report's ownership until its routed page is selected.
                 if self.report_location and parsed != self.report_location:

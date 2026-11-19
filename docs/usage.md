@@ -567,3 +567,43 @@ The dependency-free InteractiveCurve/InteractiveDiagram component is embedded
 in `report_view.js`; preserve it when refreshing the installed companion. The
 canonical measured-curve source used by the Cube42 reports is
 `FAR-ExtremeDex/.worktrees/hybrid-camera/scripts/report_assets/interactive_curve.js`.
+# Session dashboard (source update after v0)
+
+Every task home includes the same dashboard: its main report, supporting task
+reports, explicitly registered subagents, recorded update times and requests
+for help. The saved report is the source of status; this is not a process monitor.
+
+Completed or stopped rows have **Remove**. They move into **Dashboard history**,
+which retains their report and canonical subagent reference. **Restore to
+dashboard** restores the row without restarting work. History is stored per
+Herdr task and outcome in the local report database and survives browser restarts.
+New results or resumed work return to the visible dashboard.
+
+An agent can publish its status from its originating Herdr task:
+
+```bash
+herdr-browser agent --outcome website --id layout --file agent-status.json
+```
+
+```json
+{
+  "agent_id": "/root/layout",
+  "agent_label": "Layout",
+  "task": "Review the phone layout",
+  "status": "waiting",
+  "summary": "Desktop fits; phone review is pending.",
+  "updated_at": "2026-11-19T02:00:00Z",
+  "needs_help": "Review the phone preview.",
+  "report_url": "https://example.org/preview"
+}
+```
+
+Use the real subagent ID and recorded time. Supported statuses are `preparing`,
+`running`, `waiting`, `complete`, `error`, `stopped` and `unknown`. Omit
+`needs_help` when no action is requested from the reader. Omitting `updated_at`
+records the publication time. Reuse `--id` for later reports; registration itself
+does not create, resume or stop an agent. The `--outcome` is the main report ID,
+not the actual Herdr task identity, which is resolved from the originating task.
+
+[Open the interactive example](https://qiyangyan.github.io/herdr-browser/dashboard.html).
+Its sample records are illustrative; the page is a portable snapshot.

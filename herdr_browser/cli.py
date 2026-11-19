@@ -70,8 +70,10 @@ def publish_task(args):
     page = store.save_link(owner, url, main["title"], "Task pages")
     if args.export:
         args.export.parent.mkdir(parents=True, exist_ok=True)
+        from .dashboard import Dashboard
         snapshot = task_document(main, session_url, live=False,
-                                 history=reports.related_history(owner, main["id"], limit=100000))
+                                 history=reports.related_history(owner, main["id"], limit=100000),
+                                 dashboard=Dashboard(reports).snapshot(owner, main["id"], base))
         args.export.write_text(enhance_report(snapshot, main_url, "Main task"))
     # Registration is quiet by default. The live task page updates itself.
     deliver(url, main["title"], "Task pages", focus=args.focus, background=not args.focus)
@@ -113,6 +115,21 @@ def add_link(url, title, next_action=None, section="General"):
     print(f"Saved page to this Herdr task · {section}.")
 
 
+def publish_agent(args):
+    """An explicit task-owned record; registration does not spawn or resume work."""
+    from .reports import Reports
+    from .dashboard import Dashboard
+    store, owner, actual, base = report_origin()
+    reports = Reports(store.home)
+    main = reports.get(owner, args.outcome) if args.outcome else reports.primary(owner)
+    if not main:
+        raise ValueError("Publish the main task report before registering a subagent.")
+    goal = main.get("parent") or main["id"]
+    record = Dashboard(reports).upsert(owner, goal, args.id, json.loads(args.file.read_text()))
+    print(json.dumps({"owner": owner, "outcome": goal, "id": record["id"],
+                      "url": f"{base}/task/{owner}/{goal}#session-dashboard"}))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="herdr-browser",
@@ -143,6 +160,10 @@ def main(argv=None):
     task.add_argument("--status", choices=("planned", "working", "blocked", "done", "archived"))
     task.add_argument("--export", type=Path, help="also write a standalone HTML artifact")
     task.add_argument("--focus", action="store_true", help="explicitly show this task page")
+    agent = sub.add_parser("agent", help="publish a recorded subagent status to this task's dashboard")
+    agent.add_argument("--outcome", help="main outcome ID; defaults to this task's main report")
+    agent.add_argument("--id", required=True, help="stable dashboard row ID")
+    agent.add_argument("--file", required=True, type=Path, help="JSON record with task, status and provenance")
     parser.add_argument("--no-browser", action="store_true",
                         help="start with browser unloaded; terminal uses the full window")
     parser.add_argument("--browser", action="store_true",
@@ -161,6 +182,8 @@ def main(argv=None):
             add_link(args.url, args.title, args.next_action, args.section)
         elif args.command == "task":
             publish_task(args)
+        elif args.command == "agent":
+            publish_agent(args)
         elif args.command == "external":
             from .router import sync_defaults, open_external
             sync_defaults()

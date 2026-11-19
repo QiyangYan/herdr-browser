@@ -21,6 +21,7 @@ jobs:
           /usr/bin/python3 -m unittest \
             herdr_browser.test_store herdr_browser.test_router \
             herdr_browser.test_reports herdr_browser.test_recency \
+            herdr_browser.test_dashboard \
             herdr_browser.test_interactive_figures herdr_browser.test_presentation \
             tools.test_install_bundle
       - name: Native UI on private display

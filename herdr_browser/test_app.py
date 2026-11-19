@@ -419,6 +419,33 @@ class NativeTests(unittest.TestCase):
         pump()
         self.assertEqual(self.window.view.get_uri(), url)
 
+    def test_dashboard_home_and_history_use_one_view_without_extra_saved_pages(self):
+        from .dashboard import Dashboard
+        pump(.5)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('#session-dashboard').length)"), "1")
+        self.assertFalse(self.window.store.task(self.window.key)["links"])
+        reports = self.window.report_server.reports
+        reports.update(self.window.key, {"title": "Dashboard test", "summary": "Recorded work"}, goal="dashboard")
+        dashboard = Dashboard(reports)
+        dashboard.upsert(self.window.key, "dashboard", "checks", {
+            "agent_id": "/example/checks", "agent_label": "Checks",
+            "task": "Keyboard verification", "status": "complete", "summary": "Passed."})
+        self.window.home()
+        pump(.5)
+        view = self.window.view
+        self.assertEqual(self.javascript("String(document.querySelectorAll('#session-dashboard tbody tr').length)"), "2")
+        self.javascript("document.querySelector('[data-dashboard-id=\"checks\"] .sd-remove').click(); 'clicked'")
+        pump(.4)
+        self.assertEqual(len(dashboard.snapshot(self.window.key, "dashboard")["history"]), 1)
+        self.window.view.reload()
+        pump(.5)
+        self.assertEqual(self.javascript("document.querySelector('#dashboard-history summary').textContent"), "Dashboard history (1)")
+        self.javascript("document.querySelector('#dashboard-history').open=true; document.querySelector('[data-dashboard-focus=\"restore:checks\"]').click(); 'restored'")
+        pump(.4)
+        self.assertFalse(dashboard.snapshot(self.window.key, "dashboard")["history"])
+        self.assertIs(self.window.view, view)
+        self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
+
     def test_session_index_switches_verified_task_and_reference_keeps_hub(self):
         reports = self.window.report_server.reports
         owner = self.window.key

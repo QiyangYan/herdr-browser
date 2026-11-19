@@ -9,6 +9,7 @@ Use Ubuntu 22.04 x86_64 with the system Python and the dependencies listed in
 /usr/bin/python3 -m unittest \
   herdr_browser.test_store herdr_browser.test_router \
   herdr_browser.test_reports herdr_browser.test_recency \
+  herdr_browser.test_dashboard \
   herdr_browser.test_interactive_figures herdr_browser.test_presentation \
   tools.test_install_bundle
 ```
@@ -48,7 +49,8 @@ The resulting archive and `SHA256SUMS` are under `dist/`, outside Git tracking.
 The packager includes an explicit source tree, not your home directory or
 runtime state. It normalizes archive metadata for repeatable packaging.
 Check out the tag when reproducing a release; `main` can contain later
-documentation or test updates.
+source, documentation or test updates. The hashes in `provenance.json` describe
+the fixed v0 snapshot, not later changes on `main`.
 
 To test the installer without uploading:
 
@@ -58,3 +60,18 @@ bash install.sh --from dist --prefix /tmp/herdr-browser-check --skip-deps
 
 Use a disposable user/container for `--codex` tests. The option writes that
 user's `AGENTS.md`.
+
+## Dashboard example and README preview
+
+```bash
+python3 tools/render_dashboard_demo.py
+```
+
+This regenerates `docs/dashboard.html` from illustrative records using the
+shared renderer. `docs/assets/dashboard.png` is its desktop preview. Keep the
+example labeled as sample data; never copy a personal task export into it.
+
+Dashboard records and completed-work history use the existing report SQLite
+database. HTTP changes are restricted to the task URL and same origin.
+Registration through `herdr-browser agent` resolves the actual originating
+Herdr task before writing a record.

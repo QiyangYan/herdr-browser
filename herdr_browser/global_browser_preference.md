@@ -167,4 +167,17 @@
   Verify native Herdr link loading and that an actual external desktop open
   still goes to the previous browser before claiming routing works.
 
+- Every task Home includes a session dashboard with its own recorded work.
+  Main and supporting task reports appear automatically. When using subagents,
+  publish their real IDs, task, status, recorded update time, report link and any
+  explicit request for the user's help with
+  `herdr-browser agent --outcome MAIN --id STABLE_ROW --file agent-status.json`.
+  Reuse the row ID after launch, when status changes, before waiting and at
+  completion. Supported statuses are preparing, running, waiting, complete,
+  error, stopped and unknown; see the usage schema. Do not invent subagent
+  identities or imply that a saved report proves a process is still running.
+  Dashboard registration does not authorize spawning or resuming work.
+  Completed rows can move to persistent dashboard history; restoring a row
+  restores its reference without restarting its agent.
+
 <!-- herdr-browser-routing:end -->

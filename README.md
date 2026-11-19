@@ -3,14 +3,39 @@
 **Keep each Herdr task beside its own websites, living reports, and dashboards.**
 `v0` packages the existing Linux companion with a patched Herdr 0.9.3 client.
 
-```text
-Herdr task A  ↔  A's websites and report
-Herdr task B  ↔  B's websites and report
+```mermaid
+flowchart LR
+    A["Task A · selected"] --> PA["A's report and websites"]
+    B["Task B · saved"] -. "switch to B" .-> PB["B's report and websites"]
+    classDef selected fill:#e8f1ff,stroke:#2c65aa,color:#173b68
+    classDef saved fill:#f3f4f6,stroke:#8391a2,color:#394858
+    class A,PA selected
+    class B,PB saved
 ```
 
 Switch tasks and the browser follows. Reopening a URL reuses its tab. Agents can
 publish a living task page that refreshes in place, with a session overview for
-switching between tasks.
+switching between tasks. **Only one selected website runs in each window.**
+
+## See the dashboard
+
+[![Example session dashboard: each agent’s task, recorded status, last update and request for help, followed by completed-task history. All records are illustrative.](docs/assets/dashboard.png)](https://qiyangyan.github.io/herdr-browser/dashboard.html)
+
+**Shared dashboard: current source, after v0.** This example shows the new
+dashboard with sample records. The fixed v0 installer below does not include
+this later addition.
+[Open the interactive example](https://qiyangyan.github.io/herdr-browser/dashboard.html).
+[See the visual change summary](https://qiyangyan.github.io/herdr-browser/dashboard-update.html).
+
+| Read | Act |
+| --- | --- |
+| Each task's status and recorded update time | Open its supporting report |
+| **Needs your help** | See the explicit request |
+| Completed work in **Dashboard history** | Restore a row or copy its task reference |
+
+Removing a completed row keeps its report. Restoring it does not restart work.
+The dashboard shows saved reports, so a green dot alone does not prove a
+process is still running.
 
 ## Install v0
 
@@ -34,6 +59,13 @@ prebuilt client and companion from the `v0` GitHub Release, verifies SHA-256
 checksums, installs missing system packages using `apt`/`sudo`, and creates a
 **Herdr Browser** app launcher. You do not need Rust, Zig or a Python virtualenv.
 Install `curl` first if needed: `sudo apt-get install curl`.
+
+```mermaid
+flowchart LR
+    C["Run one command"] --> V["Download + verify v0"]
+    V --> I["Install Herdr Browser"]
+    I --> Y["Open your own tasks"]
+```
 
 Open **Herdr Browser** from your application menu, or run:
 

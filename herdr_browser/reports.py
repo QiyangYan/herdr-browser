@@ -15,6 +15,7 @@ import uuid
 from .store import Store, atomic_json, checked_url, task_home, status_label
 from .router import process_token
 from .presentation import inline_text
+from .dashboard import Dashboard, snapshot_from_state, start_state
 
 FIELDS = {"title", "summary", "plan", "results", "next_action", "status", "references",
           "sections", "parent", "section_title", "links_title", "tables", "figures", "curves", "results_title",
@@ -1026,7 +1027,7 @@ def document(title, body, script=""):
             f"<body><main>{body}</main>{script}</body></html>")
 
 
-def task_document(state, session_url, live=True, history=None):
+def task_document(state, session_url, live=True, history=None, dashboard=None):
     navigation = (f'<a href="{html.escape(session_url, quote=True)}">Session overview</a>'
                   if live else '<span>Standalone task snapshot</span>')
     top = (f'<div class="top">{navigation}'
@@ -1046,7 +1047,11 @@ def task_document(state, session_url, live=True, history=None):
             '<button id="refresh-history" type="button" hidden>Show latest updates</button>', "")
     body = top + (f'<article id="task-content" data-owner="{state["owner"]}" data-goal="{state["id"]}" data-live="{str(live).lower()}" '
                   f'data-revision="{state["revision"]}">{content}</article>')
-    script = "<script>" + (Path(__file__).parent / "report_view.js").read_text() + "</script>"
+    dashboard = dashboard or snapshot_from_state(state, session_url.split("/session/", 1)[0])
+    payload = json.dumps(dashboard, ensure_ascii=False).replace("<", "\\u003c")
+    body += '<script type="application/json" id="herdr-dashboard-data">' + payload + "</script>"
+    script = "".join("<script>" + (Path(__file__).parent / name).read_text() + "</script>"
+                     for name in ("report_view.js", "dashboard.js"))
     return document(state["title"], body, script)
 
 
@@ -1119,6 +1124,7 @@ class ReportServer:
     def __init__(self, store):
         self.store = store
         self.reports = Reports(store.home)
+        self.dashboard = Dashboard(self.reports)
         self.config_path = store.home / "reports-server.json"
         self.server = None
         self.thread = None
@@ -1233,7 +1239,7 @@ class ReportServer:
                 try:
                     parts = urlsplit(self.path).path.removeprefix("/" + coordinator.config["token"] + "/").split("/")
                     if (not self.path.startswith("/" + coordinator.config["token"] + "/")
-                            or len(parts) != 4 or parts[0] != "task" or parts[3] != "review"):
+                            or len(parts) != 4 or parts[0] != "task" or parts[3] not in ("review", "dashboard")):
                         self.send_error(404)
                         return
                     origin = self.headers.get("Origin")
@@ -1247,8 +1253,23 @@ class ReportServer:
                         return
                     patch = json.loads(self.rfile.read(length))
                     state = coordinator.reports.get(parts[1], parts[2])
-                    if not state or not coordinator.store.task(parts[1]):
+                    row = coordinator.store.task(parts[1])
+                    if not row or "connection" not in row:
                         self.send_error(404)
+                        return
+                    if not state and parts[2] == "start":
+                        state = start_state(parts[1], row)
+                    if not state:
+                        self.send_error(404)
+                        return
+                    if parts[3] == "dashboard":
+                        if not isinstance(patch, dict) or set(patch) != {"id", "action"}:
+                            self.send_error(400)
+                            return
+                        result = coordinator.dashboard.change(parts[1], parts[2], patch["id"],
+                                                              patch["action"], coordinator.base,
+                                                              fallback=state)
+                        self.send(json.dumps(result), "application/json")
                         return
                     if (set(patch) != {"token", "mode"} or patch["mode"] not in ("viewed", "reviewed")
                             or state["status"] == "archived" or not (state["summary"] or state["results"])):
@@ -1281,9 +1302,8 @@ class ReportServer:
                         if not row or "connection" not in row:
                             self.send_error(404)
                             return
-                        if not state and goal == "start" and len(parts) == 3:
-                            self.send(task_home(row))
-                            return
+                        if not state and goal == "start":
+                            state = start_state(owner, row)
                         if not state:
                             self.send_error(404)
                             return
@@ -1295,7 +1315,13 @@ class ReportServer:
                                 self.send_header("Cache-Control", "no-cache")
                                 self.end_headers()
                             else:
-                                self.send(task_document(state, coordinator.session_url(row)))
+                                self.send(task_document(state, coordinator.session_url(row),
+                                    dashboard=coordinator.dashboard.snapshot(
+                                        owner, goal, coordinator.base, fallback=state)))
+                        elif parts[3] == "dashboard":
+                            result = coordinator.dashboard.snapshot(owner, main["id"], coordinator.base,
+                                                                    fallback=main)
+                            self.send(json.dumps(result), "application/json")
                         elif parts[3] == "data":
                             token = conclusion_token(main)
                             mark = row.get("conclusion_marks", {}).get(main["id"], {})
