@@ -1,0 +1,38 @@
+{
+  "snapshot_utc": "2026-11-19T02:27:33+00:00",
+  "headline": "v0 passed its installation and browser checks; the public release is ready.",
+  "release_status": "Prepared; publication and public download verification follow.",
+  "next_action": "Publish v0 and verify the installation command from GitHub.",
+  "checks": [
+    {
+      "check": "Unit tests",
+      "status": "Passed",
+      "evidence": "69 tests: task ownership, routing, reports, figures, instruction merge and rollback."
+    },
+    {
+      "check": "Native UI",
+      "status": "Passed",
+      "evidence": "40 contracts on private Xvfb: task switching, one live view, reports, clipboard and zoom."
+    },
+    {
+      "check": "Real Herdr compatibility",
+      "status": "Passed",
+      "evidence": "Two patched clients on the original 0.9.3 server; external routing, reports and in-app update."
+    },
+    {
+      "check": "Clean installation",
+      "status": "Passed",
+      "evidence": "Fresh Ubuntu 22.04 user, automatic dependencies including gio, launcher and preserved Codex instructions."
+    },
+    {
+      "check": "Installer failure handling",
+      "status": "Passed",
+      "evidence": "Repeat install, prefix with spaces, backup, corrupt download and unsafe archive rejection."
+    },
+    {
+      "check": "Release overview",
+      "status": "Passed",
+      "evidence": "Rendered at 1280 px and 375 px; expanded sections have no horizontal overflow."
+    }
+  ]
+}

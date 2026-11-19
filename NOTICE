@@ -1,0 +1,13 @@
+Herdr Browser v0
+
+This distribution includes a modified Herdr 0.9.3 executable.
+Upstream: https://github.com/herdrdev/herdr
+Upstream commit: 7b116c05bfda646af39d2524c54e70c751f57ee8
+License: Apache License, Version 2.0
+
+The patch in patches/herdr-0.9.3-browser-context.patch adds an optional
+client-local browser context signal and task selection support.
+The Python companion, report renderer, release installer and documentation
+are additional components distributed under the same license.
+
+This is an independent companion project, not an official Herdr release.

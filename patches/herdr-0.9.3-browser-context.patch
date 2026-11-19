@@ -1,0 +1,463 @@
+diff --git a/src/client/browser_context.rs b/src/client/browser_context.rs
+new file mode 100644
+index 0000000..0f26094
+--- /dev/null
++++ b/src/client/browser_context.rs
+@@ -0,0 +1,272 @@
++//! Opt-in, client-local selection for a native companion. No server or wire changes.
++//! Disabled clients do no extra projection, allocation, serialization or file I/O.
++
++use std::path::PathBuf;
++
++use serde::{Deserialize, Serialize};
++
++use super::endpoint::ClientEndpointId;
++use crate::protocol::ClientShellSnapshot;
++
++pub(crate) struct Projection<'a> {
++    pub(crate) endpoint: &'a ClientEndpointId,
++    pub(crate) endpoint_label: &'a str,
++    pub(crate) online: bool,
++    pub(crate) snapshot: Option<&'a ClientShellSnapshot>,
++}
++
++#[derive(Debug, PartialEq, Eq)]
++struct Stamp {
++    endpoint: ClientEndpointId,
++    ready: bool,
++    boot_id: String,
++    revision: u64,
++    workspace_id: Option<String>,
++    tab_id: Option<String>,
++}
++
++impl Stamp {
++    fn matches(&self, projection: &Projection<'_>, ready: bool) -> bool {
++        let snapshot = projection.snapshot;
++        self.endpoint == *projection.endpoint
++            && self.ready == ready
++            && self.boot_id == snapshot.map_or("", |snapshot| snapshot.boot_id.as_str())
++            && self.revision == snapshot.map_or(0, |snapshot| snapshot.revision)
++            && self.workspace_id.as_deref()
++                == snapshot.and_then(|snapshot| snapshot.focused_workspace_id.as_deref())
++            && self.tab_id.as_deref()
++                == snapshot.and_then(|snapshot| snapshot.focused_tab_id.as_deref())
++    }
++
++    fn new(projection: &Projection<'_>, ready: bool) -> Self {
++        let snapshot = projection.snapshot;
++        Self {
++            endpoint: projection.endpoint.clone(),
++            ready,
++            boot_id: snapshot
++                .map_or("", |snapshot| snapshot.boot_id.as_str())
++                .to_owned(),
++            revision: snapshot.map_or(0, |snapshot| snapshot.revision),
++            workspace_id: snapshot.and_then(|snapshot| snapshot.focused_workspace_id.clone()),
++            tab_id: snapshot.and_then(|snapshot| snapshot.focused_tab_id.clone()),
++        }
++    }
++}
++
++#[derive(Serialize)]
++struct Task<'a> {
++    tab_id: &'a str,
++    workspace_id: &'a str,
++    label: &'a str,
++    agent_status: crate::api::schema::AgentStatus,
++}
++
++#[derive(Serialize)]
++struct Workspace<'a> {
++    workspace_id: &'a str,
++    label: &'a str,
++}
++
++#[derive(Serialize)]
++struct Context<'a> {
++    schema: u8,
++    endpoint: String,
++    endpoint_label: &'a str,
++    available: bool,
++    boot_id: &'a str,
++    focused_workspace_id: Option<&'a str>,
++    focused_tab_id: Option<&'a str>,
++    tasks: Vec<Task<'a>>,
++    workspaces: Vec<Workspace<'a>>,
++}
++
++pub(crate) struct Publisher {
++    path: PathBuf,
++    last: Option<Stamp>,
++    failed: bool,
++    request_path: PathBuf,
++    last_request: Option<(std::time::SystemTime, u64)>,
++}
++
++#[derive(Deserialize)]
++pub(crate) struct SelectionRequest {
++    pub(crate) endpoint: String,
++    pub(crate) boot_id: String,
++    pub(crate) tab_id: String,
++}
++
++impl Publisher {
++    pub(crate) fn from_environment() -> Option<Self> {
++        std::env::var_os("HERDR_BROWSER_CONTEXT_PATH")
++            .filter(|path| !path.is_empty())
++            .map(|path| Self::new(path.into()))
++    }
++
++    fn new(path: PathBuf) -> Self {
++        Self {
++            request_path: path.with_extension("request"),
++            path,
++            last: None,
++            failed: false,
++            last_request: None,
++        }
++    }
++
++    pub(crate) fn selection_request(&mut self) -> Option<SelectionRequest> {
++        let metadata = std::fs::metadata(&self.request_path).ok()?;
++        let stamp = (metadata.modified().ok()?, metadata.len());
++        if self.last_request == Some(stamp) || metadata.len() > 4096 {
++            return None;
++        }
++        self.last_request = Some(stamp);
++        serde_json::from_slice(&std::fs::read(&self.request_path).ok()?).ok()
++    }
++
++    pub(crate) fn sync(&mut self, projection: Projection<'_>, presented: bool) {
++        if self.failed {
++            return;
++        }
++        let ready = presented && projection.online && projection.snapshot.is_some();
++        if self
++            .last
++            .as_ref()
++            .is_some_and(|last| last.matches(&projection, ready))
++        {
++            return;
++        }
++        // Semantic changes only, outside rendering and pane-scaled loops.
++        let snapshot = projection.snapshot;
++        let context = Context {
++            schema: 1,
++            endpoint: projection.endpoint.storage_key(),
++            endpoint_label: projection.endpoint_label,
++            available: ready,
++            boot_id: snapshot.map_or("", |snapshot| snapshot.boot_id.as_str()),
++            focused_workspace_id: snapshot
++                .and_then(|snapshot| snapshot.focused_workspace_id.as_deref()),
++            focused_tab_id: snapshot.and_then(|snapshot| snapshot.focused_tab_id.as_deref()),
++            tasks: snapshot.map_or_else(Vec::new, |snapshot| {
++                snapshot
++                    .tabs
++                    .iter()
++                    .map(|tab| Task {
++                        tab_id: &tab.tab_id,
++                        workspace_id: &tab.workspace_id,
++                        label: &tab.label,
++                        agent_status: tab.agent_status,
++                    })
++                    .collect()
++            }),
++            workspaces: snapshot.map_or_else(Vec::new, |snapshot| {
++                snapshot
++                    .workspaces
++                    .iter()
++                    .map(|workspace| Workspace {
++                        workspace_id: &workspace.workspace_id,
++                        label: &workspace.label,
++                    })
++                    .collect()
++            }),
++        };
++        let result = serde_json::to_vec(&context)
++            .map_err(std::io::Error::other)
++            .and_then(|bytes| {
++                let temporary = self.path.with_extension("tmp");
++                std::fs::write(&temporary, bytes)?;
++                std::fs::rename(temporary, &self.path)
++            });
++        match result {
++            Ok(()) => self.last = Some(Stamp::new(&projection, ready)),
++            Err(error) => {
++                // A companion failure must never interrupt the user's terminal.
++                tracing::warn!(%error, path = %self.path.display(), "browser context disabled after write failure");
++                // Do not leave an old selection looking current to the companion.
++                let _ = std::fs::remove_file(&self.path);
++                self.failed = true;
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn unavailable_context_has_no_invented_task() {
++        let path =
++            std::env::temp_dir().join(format!("herdr-browser-context-{}.json", std::process::id()));
++        let mut publisher = Publisher::new(path.clone());
++        let endpoint = ClientEndpointId::Local;
++        publisher.sync(
++            Projection {
++                endpoint: &endpoint,
++                endpoint_label: "Local",
++                online: false,
++                snapshot: None,
++            },
++            true,
++        );
++        let value: serde_json::Value =
++            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
++        assert_eq!(value["available"], false);
++        assert_eq!(value["focused_tab_id"], serde_json::Value::Null);
++        assert_eq!(value["tasks"], serde_json::json!([]));
++        // Unchanged selection does not write again: the removed file stays removed.
++        std::fs::remove_file(&path).unwrap();
++        publisher.sync(
++            Projection {
++                endpoint: &endpoint,
++                endpoint_label: "Local",
++                online: false,
++                snapshot: None,
++            },
++            true,
++        );
++        assert!(!path.exists());
++    }
++
++    #[test]
++    fn write_failure_disables_only_the_publisher() {
++        let path = std::env::temp_dir().join(format!(
++            "herdr-browser-missing-{}/context.json",
++            std::process::id()
++        ));
++        let mut publisher = Publisher::new(path);
++        let endpoint = ClientEndpointId::Local;
++        publisher.sync(
++            Projection {
++                endpoint: &endpoint,
++                endpoint_label: "Local",
++                online: false,
++                snapshot: None,
++            },
++            true,
++        );
++        assert!(publisher.failed);
++        assert!(publisher.last.is_none());
++    }
++
++    #[test]
++    fn write_failure_removes_a_stale_selection() {
++        let directory =
++            std::env::temp_dir().join(format!("herdr-browser-stale-{}", std::process::id()));
++        std::fs::create_dir_all(&directory).unwrap();
++        let path = directory.join("context.json");
++        std::fs::write(&path, b"old selection").unwrap();
++        std::fs::create_dir_all(path.with_extension("tmp")).unwrap();
++        let mut publisher = Publisher::new(path.clone());
++        publisher.sync(
++            Projection {
++                endpoint: &ClientEndpointId::Local,
++                endpoint_label: "Local",
++                online: false,
++                snapshot: None,
++            },
++            true,
++        );
++        assert!(publisher.failed);
++        assert!(!path.exists());
++        std::fs::remove_dir_all(directory).unwrap();
++    }
++}
+diff --git a/src/client/mod.rs b/src/client/mod.rs
+index d55e4c4..3a565c8 100644
+--- a/src/client/mod.rs
++++ b/src/client/mod.rs
+@@ -13,6 +13,7 @@
+ //! - Displays sound/toast notifications forwarded from server
+ 
+ mod attach;
++mod browser_context;
+ mod catalog_reload;
+ mod clipboard_forwarding;
+ mod clipboard_images;
+@@ -649,9 +650,42 @@ async fn run_client_loop(
+ 
+     // Main event loop.
+     let mut client_timer = timer::ClientLoopTimer::new();
++    let mut browser_publisher = browser_context::Publisher::from_environment();
+     #[cfg(windows)]
+     let mut stdin_open = true;
+     while !should_quit.load(Ordering::Acquire) {
++        if !state.presentation_frozen && pending_activation.is_none() {
++            if let Some(request) = browser_publisher
++                .as_mut()
++                .and_then(|publisher| publisher.selection_request())
++            {
++                let actions = state
++                    .shell
++                    .as_mut()
++                    .map_or_else(Vec::new, |shell| shell.browser_select(request));
++                let (_, repaint) = dispatch_client_shell_actions(
++                    actions,
++                    &mut endpoint_commands,
++                    &mut write_stream,
++                    state.shell.as_mut(),
++                    &mut state.detached_process_children,
++                    &mut scheduled_activation,
++                )?;
++                if repaint {
++                    if let Some(frame) = state.shell.as_mut().and_then(|shell| {
++                        shell.compose(state.reported_size.0, state.reported_size.1)
++                    }) {
++                        state.present_frame(frame);
++                    }
++                }
++            }
++        }
++        if let (Some(publisher), Some(shell)) = (browser_publisher.as_mut(), state.shell.as_ref()) {
++            publisher.sync(
++                shell.browser_projection(),
++                !state.presentation_frozen && pending_activation.is_none(),
++            );
++        }
+         if pending_activation.is_none() {
+             if let Some(reload) = pending_catalog.take() {
+                 match reload {
+@@ -763,6 +797,11 @@ async fn run_client_loop(
+             .map_or(Duration::from_millis(100), |shell| {
+                 shell.timer_delay(std::time::Instant::now())
+             });
++        let timer_delay = if browser_publisher.is_some() {
++            timer_delay.min(Duration::from_millis(200))
++        } else {
++            timer_delay
++        };
+         let timer_deadline = client_timer.deadline(std::time::Instant::now(), timer_delay);
+         let immediate_event = scheduled_activation.take();
+         #[cfg(windows)]
+diff --git a/src/client/shell.rs b/src/client/shell.rs
+index 2d18044..414a096 100644
+--- a/src/client/shell.rs
++++ b/src/client/shell.rs
+@@ -3,6 +3,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
+ mod actions;
+ mod agent_sidebar;
+ mod aggregate_navigation;
++mod browser_context;
+ mod machine_diagnostics;
+ mod workspace_navigation;
+ use workspace_navigation::{PendingWorkspaceHighlight, WorkspaceNavigationTarget};
+diff --git a/src/client/shell/browser_context.rs b/src/client/shell/browser_context.rs
+new file mode 100644
+index 0000000..9645d74
+--- /dev/null
++++ b/src/client/shell/browser_context.rs
+@@ -0,0 +1,100 @@
++use super::*;
++
++impl ClientShellState {
++    /// Requests are scoped to this client's currently visible server incarnation.
++    pub(crate) fn browser_select(
++        &mut self,
++        request: crate::client::browser_context::SelectionRequest,
++    ) -> Vec<ClientShellAction> {
++        let valid = request.endpoint == self.active_endpoint_id.storage_key()
++            && self.endpoint_status(&self.active_endpoint_id) == Some(ClientEndpointStatus::Online)
++            && self.snapshot.as_ref().is_some_and(|snapshot| {
++                snapshot.boot_id == request.boot_id
++                    && snapshot.tabs.iter().any(|tab| tab.tab_id == request.tab_id)
++            });
++        if !valid {
++            return Vec::new();
++        }
++        self.focus_endpoint_target(ClientEndpointFocusTarget::Tab(request.tab_id))
++    }
++
++    /// Uses this client's selected endpoint and projection, never shared API focus.
++    pub(crate) fn browser_projection(&self) -> crate::client::browser_context::Projection<'_> {
++        crate::client::browser_context::Projection {
++            endpoint: &self.active_endpoint_id,
++            endpoint_label: self.active_endpoint_label(),
++            online: self.endpoint_status(&self.active_endpoint_id)
++                == Some(ClientEndpointStatus::Online),
++            snapshot: self.snapshot.as_deref(),
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use crate::client::browser_context::SelectionRequest;
++
++    fn state() -> ClientShellState {
++        let mut shell = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
++        shell.set_snapshot(Box::new(super::super::tests::snapshot()));
++        shell.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Online);
++        shell
++    }
++
++    fn request(endpoint: &str, boot_id: &str, tab_id: &str) -> SelectionRequest {
++        SelectionRequest {
++            endpoint: endpoint.into(),
++            boot_id: boot_id.into(),
++            tab_id: tab_id.into(),
++        }
++    }
++
++    #[test]
++    fn browser_context_selection_rejects_other_servers_and_deleted_tasks() {
++        let mut shell = state();
++        for invalid in [
++            request("ssh:other", "boot-1", "tab_1"),
++            request("local", "old-boot", "tab_1"),
++            request("local", "boot-1", "deleted"),
++        ] {
++            assert!(shell.browser_select(invalid).is_empty());
++        }
++        let actions = shell.browser_select(request("local", "boot-1", "tab_1"));
++        assert!(matches!(
++            &actions[..],
++            [ClientShellAction::Endpoint { endpoint_id: ClientEndpointId::Local, request, .. }]
++                if matches!(&request.method, crate::api::schema::Method::TabFocus(target)
++                    if target.tab_id == "tab_1")
++        ));
++        shell.set_endpoint_status(&ClientEndpointId::Local, ClientEndpointStatus::Reconnecting);
++        assert!(shell
++            .browser_select(request("local", "boot-1", "tab_1"))
++            .is_empty());
++    }
++
++    #[test]
++    fn browser_context_projection_uses_each_clients_selection() {
++        let first = state();
++        let mut second = state();
++        second.snapshot.as_mut().unwrap().focused_tab_id = Some("tab_2".into());
++        assert_eq!(
++            first
++                .browser_projection()
++                .snapshot
++                .unwrap()
++                .focused_tab_id
++                .as_deref(),
++            Some("tab_1")
++        );
++        assert_eq!(
++            second
++                .browser_projection()
++                .snapshot
++                .unwrap()
++                .focused_tab_id
++                .as_deref(),
++            Some("tab_2")
++        );
++    }
++}

@@ -1,0 +1,651 @@
+"""Run only on a private Xvfb display; never inject events into the user's desktop."""
+import argparse
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import time
+import unittest
+import signal
+import subprocess
+import ctypes
+from ctypes.util import find_library
+from unittest.mock import Mock, patch
+
+if os.environ.get("HERDR_BROWSER_TEST_DISPLAY") != "private":
+    raise RuntimeError("Use an isolated Xvfb display for these native UI tests.")
+
+from .app import BrowserWindow, GLib, Gtk
+from .store import atomic_json, task_key
+from .router import deliver
+import gi
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk
+
+if Gdk.Display.get_default().get_name() != os.environ.get("DISPLAY"):
+    raise RuntimeError("GTK must use the private Xvfb display; set GDK_BACKEND=x11.")
+
+
+def pump(seconds=0.3):
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        while GLib.MainContext.default().pending():
+            GLib.MainContext.default().iteration(False)
+        time.sleep(0.01)
+
+def click_native_terminal(event, drag_dx=0):
+    """Real X11 input, explicitly connected to the private display only."""
+    display_name = os.environ["DISPLAY"]
+    if Gdk.Display.get_default().get_name() != display_name:
+        raise RuntimeError("Refusing to inject events outside the private display.")
+    x11 = ctypes.CDLL(find_library("X11"))
+    xtest = ctypes.CDLL(find_library("Xtst"))
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    xtest.XTestFakeMotionEvent.argtypes = [
+        ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_ulong]
+    xtest.XTestFakeButtonEvent.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+    display = x11.XOpenDisplay(display_name.encode())
+    if not display:
+        raise RuntimeError("Could not connect to private Xvfb.")
+    try:
+        x, y = event.get_window().get_origin()[-2:]
+        if not xtest.XTestFakeMotionEvent(display, -1, x + int(event.x), y + int(event.y), 0):
+            raise RuntimeError("Could not move the private pointer.")
+        xtest.XTestFakeButtonEvent(display, 1, 1, 0)
+        x11.XFlush(display)
+        pump(.05)
+        if drag_dx:
+            xtest.XTestFakeMotionEvent(display, -1, x + int(event.x) + drag_dx,
+                                      y + int(event.y), 0)
+            x11.XFlush(display)
+            pump(.05)
+        xtest.XTestFakeButtonEvent(display, 1, 0, 0)
+        x11.XFlush(display)
+        pump()
+    finally:
+        x11.XCloseDisplay(display)
+
+
+class NativeTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.old_home = os.environ.get("HERDR_BROWSER_HOME")
+        os.environ["HERDR_BROWSER_HOME"] = self.tmp.name
+        fake_client = Path(self.tmp.name) / "fake-client"
+        fake_client.write_text("#!/bin/sh\nexec /bin/cat\n")
+        fake_client.chmod(0o700)
+        self.args = argparse.Namespace(client=fake_client, session="ui-test",
+                                       no_browser=False, browser=True)
+        self.window = BrowserWindow(self.args)
+        self.addCleanup(self.close)
+        self.context = {
+            "schema": 1, "available": True, "endpoint": "local",
+            "endpoint_label": "Local", "boot_id": "test-boot",
+            "focused_tab_id": "t1", "focused_workspace_id": "w1",
+            "tasks": [
+                {"tab_id": "t1", "workspace_id": "w1", "label": "Evaluation",
+                 "agent_status": "working"},
+                {"tab_id": "t2", "workspace_id": "w1", "label": "Training",
+                 "agent_status": "blocked"},
+            ],
+            "workspaces": [{"workspace_id": "w1", "label": "Private UI test"}],
+        }
+        atomic_json(self.window.context_path, self.context)
+        pump(1.0)
+
+    def close(self):
+        self.window.on_close()
+        self.window.destroy()
+        pump(0.1)
+        if self.old_home is None:
+            os.environ.pop("HERDR_BROWSER_HOME", None)
+        else:
+            os.environ["HERDR_BROWSER_HOME"] = self.old_home
+
+    def test_switch_disposes_old_view_and_rejects_late_uri(self):
+        first_key, old_view = self.window.key, self.window.view
+        self.assertIsNotNone(old_view)
+        self.window.store.save_link(first_key, "https://example.com/one", "First")
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertNotEqual(self.window.key, first_key)
+        self.assertIsNot(self.window.view, old_view)
+        # A late URI signal from the old task cannot save into the new task.
+        self.window.uri_changed(old_view, None, first_key)
+        self.assertEqual(self.window.store.task(self.window.key)["last_url"], "")
+        self.context["focused_tab_id"] = "t1"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertEqual(self.window.key, first_key)
+        self.assertEqual(self.window.store.task(first_key)["links"][0]["title"], "First")
+
+    def test_toggle_frees_view_and_restores_terminal_width(self):
+        before = self.window.terminal.get_allocated_width()
+        self.window.toggle.set_active(False)
+        pump()
+        self.assertIsNone(self.window.view)
+        self.assertFalse(self.window.browser_box.get_visible())
+        self.assertGreater(self.window.terminal.get_allocated_width(), before)
+        self.assertFalse(self.window.store.read()["browser_enabled"])
+        self.window.toggle.set_active(True)
+        pump()
+        self.assertIsNotNone(self.window.view)
+
+    def test_task_picker_uses_private_request_and_waits_for_client_focus(self):
+        original = self.window.key
+        self.window.task_picker.set_active(self.window.task_ids.index("t2"))
+        request = json.loads(self.window.context_path.with_suffix(".request").read_text())
+        self.assertEqual(request["tab_id"], "t2")
+        self.assertEqual(request["boot_id"], "test-boot")
+        self.assertEqual(self.window.key, original)
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertEqual(self.window.key,
+                         task_key(self.window.connection, self.context, "t2"))
+
+    def test_recency_headers_are_disabled_and_refresh_keeps_actual_selection(self):
+        third = {"tab_id": "t3", "workspace_id": "w1", "label": "Earlier task",
+                 "agent_status": "idle"}
+        self.context["tasks"].append(third)
+        self.window.context = self.context
+        self.window.store.register_context(self.window.connection, self.context)
+        now = time.time()
+        with self.window.store.transaction() as state:
+            for identity, age in (("t1", 1), ("t2", 10), ("t3", 45)):
+                key = task_key(self.window.connection, self.context, identity)
+                state["tasks"][key]["last_activity_at"] = now - age * 86400
+        self.window.refresh_task_menu()
+        model = self.window.task_picker.get_model()
+        self.assertEqual([row[0] for row in model if row[1] is None],
+                         ["Last 7 days", "Last 1 month", "Earlier"])
+        self.assertEqual(self.window.task_picker.get_active_id(), "t1")
+        request = self.window.context_path.with_suffix(".request")
+        self.assertFalse(request.exists())
+        renderer = self.window.task_picker.get_cells()[0]
+        self.window.render_task_row(self.window.task_picker, renderer, model,
+                                    model.get_iter_first())
+        self.assertFalse(renderer.get_property("sensitive"))
+        self.window.task_picker.set_active(0)
+        self.assertEqual(self.window.task_picker.get_active_id(), "t1")
+        self.assertFalse(request.exists())
+        self.window.task_picker.set_active(self.window.task_ids.index("t2"))
+        self.assertEqual(json.loads(request.read_text())["tab_id"], "t2")
+
+    def test_disconnect_clears_binding_and_keeps_terminal(self):
+        self.context["available"] = False
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertIsNone(self.window.key)
+        self.assertIsNone(self.window.view)
+        self.assertFalse(self.window.address.get_sensitive())
+        self.assertTrue(self.window.terminal.get_visible())
+
+    def test_missing_signal_clears_the_previous_task(self):
+        self.window.context_path.unlink()
+        pump()
+        self.assertIsNone(self.window.key)
+        self.assertIsNone(self.window.view)
+        self.assertFalse(self.window.address.get_sensitive())
+
+    def test_launching_task_is_requested_before_binding_another_task(self):
+        self.window.destroy_view()
+        self.window.key = None
+        self.window.launch_tab = "t2"
+        self.window.apply_context()
+        request = json.loads(self.window.context_path.with_suffix(".request").read_text())
+        self.assertEqual(request["tab_id"], "t2")
+        self.assertIsNone(self.window.key)
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertIsNotNone(self.window.key)
+
+    def test_client_exit_cannot_rebind_stale_context(self):
+        os.kill(self.window.client_pid, signal.SIGTERM)
+        pump()
+        self.assertTrue(self.window.client_exited)
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertIsNone(self.window.key)
+        self.assertIsNone(self.window.view)
+        self.assertFalse(self.window.task_picker.get_sensitive())
+
+    def test_rendered_native_home(self):
+        self.window.move(0, 0)
+        pump(1.0)
+        output = Path(os.environ.get("HERDR_BROWSER_SCREENSHOT", "/tmp/herdr-browser-native.png"))
+        width = self.window.get_window().get_width()
+        height = self.window.get_window().get_height()
+        image = Gdk.pixbuf_get_from_window(self.window.get_window(), 0, 0, width, height)
+        self.assertIsNotNone(image)
+        image.savev(str(output), "png", [], [])
+        self.assertGreater(output.stat().st_size, 1000)
+
+    def test_section_and_page_switches_keep_one_view_and_ignore_old_events(self):
+        key = self.window.key
+        first = self.window.store.save_link(key, "https://example.com/first", "First", "Research")
+        second = self.window.store.save_link(key, "https://example.com/second", "Second", "Research")
+        self.window.store.add_section(key, "Review")
+        self.window.refresh_pages()
+        old = self.window.view
+        self.window.section_picker.set_active(self.window.section_names.index("Research"))
+        self.assertEqual(self.window.section, "Research")
+        self.assertEqual(self.window.active_page, first)
+        self.assertIsNot(self.window.view, old)
+        self.window.open_page(None, second)
+        self.assertEqual(self.window.active_page, second)
+        research_view = self.window.view
+        self.window.section_picker.set_active(self.window.section_names.index("Review"))
+        self.assertTrue(self.window.showing_home)
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+        self.window.uri_changed(research_view, None, key)
+        self.window.title_changed(research_view, None, key)
+        self.assertEqual(self.window.store.task(key)["sections"]["Review"]["last_url"], "")
+        self.window.section_picker.set_active(self.window.section_names.index("Research"))
+        self.assertEqual(self.window.active_page, second)
+        self.window.close_page()
+        self.assertTrue(self.window.showing_home)
+        self.assertNotIn(second, [link["id"] for link in self.window.store.task(key)["links"]])
+
+    def test_intentional_disposal_ignores_synchronous_termination_signal(self):
+        real_view = self.window.view
+        fake_view = Mock()
+        fake_view.terminate_web_process.side_effect = lambda: self.window.web_terminated(
+            fake_view, None, self.window.key)
+        self.window.view = fake_view
+        self.window.report("")
+        self.window.destroy_view()
+        self.assertEqual(self.window.message.get_text(), "")
+        self.assertIsNone(self.window.view)
+        fake_view.destroy.assert_called_once()
+        self.window.view = real_view
+
+    def test_routed_website_is_registered_and_visualized_automatically(self):
+        url = "http://127.0.0.1:9/routing-test"
+        self.assertTrue(deliver(url, "New report", "Review", focus=True))
+        pump()
+        self.assertEqual(self.window.section, "Review")
+        row = self.window.store.task(self.window.key)
+        self.assertEqual(row["last_url"], url)
+        self.assertEqual(row["sections"]["Review"]["active_page"], self.window.active_page)
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+
+    def test_agent_output_in_background_task_does_not_steal_selection(self):
+        key, view = self.window.key, self.window.view
+        url = "http://127.0.0.1:9/background-report"
+        with patch.dict(os.environ, HERDR_TAB_ID="t2", HERDR_SOCKET_PATH=self.window.connection):
+            self.assertTrue(deliver(url, "Training report", "Results"))
+        pump()
+        self.assertEqual(self.window.key, key)
+        self.assertIs(self.window.view, view)
+        other = task_key(self.window.connection, self.context, "t2")
+        self.assertEqual(self.window.store.task(other)["last_url"], url)
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertEqual(self.window.section, "Results")
+        self.assertEqual(self.window.store.task(other)["last_url"], url)
+
+    def test_clicked_background_task_url_waits_for_verified_client_selection(self):
+        url = "http://127.0.0.1:9/clicked-report"
+        other = task_key(self.window.connection, self.context, "t2")
+        self.window.store.save_link(other, url, "Training report", "Results")
+        old_key = self.window.key
+        self.assertTrue(deliver(url, focus=True))
+        pump()
+        self.assertEqual(self.window.key, old_key)
+        request = json.loads(self.window.context_path.with_suffix(".request").read_text())
+        self.assertEqual(request["tab_id"], "t2")
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.assertEqual(self.window.key, other)
+        self.assertEqual(self.window.section, "Results")
+        self.assertIsNone(self.window.pending_route)
+
+    def test_invalid_routing_payload_does_not_clear_task_binding(self):
+        key = self.window.key
+        atomic_json(self.window.inbox / "invalid.json", ["not", "a", "request"])
+        pump()
+        self.assertEqual(self.window.key, key)
+        self.assertIsNotNone(self.window.view)
+
+    def terminal_link_event(self, text, url):
+        terminal = self.window.terminal
+        terminal.reset(True, True)
+        terminal.feed(("\x1b[2J\x1b[H" + text + "\r\n").encode())
+        pump(0.2)
+        event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+        event.button = 1
+        event.state = Gdk.ModifierType(0)
+        # VTE receives events through its input-only child window, which is
+        # distinct from get_window(). Match that actual event window.
+        for window in terminal.get_window().get_children():
+            event.window = window
+            for y in range(2, terminal.get_char_height() * 2, 4):
+                for x in range(2, min(terminal.get_allocated_width(), 160), 4):
+                    event.x, event.y = x, y
+                    if self.window.terminal_url(event) == url:
+                        return event
+        self.fail("The actual terminal did not detect the rendered URL")
+
+    def click_terminal(self, event):
+        pressed = self.window.terminal.emit("button-press-event", event)
+        released = Gdk.Event.new(Gdk.EventType.BUTTON_RELEASE)
+        released.window = event.window
+        released.button, released.state = event.get_button()[1], event.state
+        released.x, released.y = event.x, event.y
+        handled = self.window.terminal.emit("button-release-event", released)
+        pump()
+        return pressed, handled
+
+    def test_terminal_named_link_opens_beside_its_source_task(self):
+        url = "http://127.0.0.1:9/named-report"
+        text = f"\x1b]8;;{url}\x1b\\View the change summary\x1b]8;;\x1b\\"
+        other = task_key(self.window.connection, self.context, "t2")
+        self.window.store.save_link(other, url, "Other task's report", "Other section")
+        key = self.window.key
+        event = self.terminal_link_event(text, url)
+        self.assertEqual(self.click_terminal(event), (True, True),
+                         "Both click events must stop before reaching the child TUI")
+        self.assertEqual(self.window.key, key)
+        self.assertFalse(self.window.showing_home)
+        self.assertEqual(self.window.store.task(key)["last_url"], url)
+        self.assertFalse(self.window.context_path.with_suffix(".request").exists())
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+
+    def javascript(self, expression):
+        results = []
+        def finished(view, result, _):
+            results.append(view.run_javascript_finish(result).get_js_value().to_string())
+        self.window.view.run_javascript(expression, None, finished, None)
+        deadline = time.monotonic() + 5
+        while not results and time.monotonic() < deadline:
+            pump(.05)
+        self.assertTrue(results, "Native report JavaScript completed")
+        return results[0]
+
+    def test_living_page_updates_without_reload_and_preserves_section_and_scroll(self):
+        reports = self.window.report_server.reports
+        text = "\n\n".join(f"Result {i}: " + "measured details " * 20 for i in range(30))
+        figure = {"title": "Synthetic test figure", "unit": "Test episodes", "maximum": 2,
+                  "values": [{"label": "Fixture", "value": 1, "note": "Synthetic fixture"}],
+                  "caption": "Test data only."}
+        curve = {"title": "Synthetic test curve", "caption": "Synthetic fixture only.",
+                 "x_label": "Updates", "y_label": "Success (%)", "x_maximum": 200,
+                 "y_maximum": 100, "gap": 100,
+                 "series": [{"label": "Fixture", "points": [{"x": 100, "y": 50}]}]}
+        state = reports.update(self.window.key, {"summary": "Initial", "results": text,
+                                                "figures": [figure], "curves": [curve]},
+                               new_title="Live report")
+        url = self.window.report_server.task_url(self.window.key, state["id"])
+        self.window.store.save_link(self.window.key, url, state["title"], "Task pages")
+        self.window.open_terminal_url(url, self.window.key)
+        pump(.5)
+        self.javascript('document.querySelector("#full-results").open = true; scrollTo(0,400); "ready"')
+        position = float(self.javascript("String(scrollY)"))
+        view, page = self.window.view, self.window.active_page
+        updated_figure = dict(figure, values=[{"label": "Fixture", "value": 2, "note": "Synthetic fixture"}])
+        updated_curve = dict(curve, series=[{"label": "Fixture", "points": [{"x": 100, "y": 50},
+                                                                         {"x": 200, "y": 75}]}])
+        reports.update(self.window.key, {"summary": "Updated silently", "results": text + "\n\nNew result",
+                                        "figures": [updated_figure], "curves": [updated_curve]})
+        pump(3.4)
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.window.active_page, page)
+        self.assertEqual(self.javascript("document.querySelector('#task-content').dataset.revision"), "2")
+        self.assertEqual(self.javascript("String(document.querySelector('#full-results').open)"), "true")
+        self.assertEqual(self.javascript("document.querySelector('.bar-value').textContent"), "2 / 2")
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-series circle').length)"), "2")
+        self.assertAlmostEqual(float(self.javascript("String(scrollY)")), position, delta=2)
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+        self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
+        self.window.new_page()
+        pump()
+        self.assertTrue(self.window.showing_home)
+        self.window.home()
+        pump()
+        self.assertEqual(self.window.view.get_uri(), url)
+
+    def test_session_index_switches_verified_task_and_reference_keeps_hub(self):
+        reports = self.window.report_server.reports
+        owner = self.window.key
+        first = reports.update(owner, {"references": [
+            {"title": "Source", "url": self.window.report_server.base + "/reference"}]}, new_title="First outcome")
+        url = self.window.report_server.task_url(owner, first["id"])
+        self.window.store.save_link(owner, url, "First outcome", "Task pages")
+        self.window.open_terminal_url(url, owner)
+        pump(.5)
+        self.javascript('setTimeout(() => document.querySelector(".linked-pages a").click(), 50); "scheduled"')
+        pump(.4)
+        saved = self.window.store.task(owner)["links"]
+        self.assertEqual(next(page for page in saved if page["title"] == "First outcome")["url"], url)
+        self.assertEqual(len(saved), 2)
+        other = task_key(self.window.connection, self.context, "t2")
+        second = reports.update(other, {"summary": "Another task"}, new_title="Second outcome")
+        other_url = self.window.report_server.task_url(other, second["id"])
+        self.window.store.save_link(other, other_url, "Second outcome", "Task pages")
+        self.window.session_overview()
+        pump(.5)
+        self.assertEqual(self.window.key, owner)
+        self.javascript(f'setTimeout(() => document.querySelector("a[href=\\"{other_url}\\"]").click(), 50); "scheduled"')
+        pump()
+        request = json.loads(self.window.context_path.with_suffix(".request").read_text())
+        self.assertEqual(request["tab_id"], "t2")
+        self.assertEqual(self.window.key, owner)
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump(.5)
+        self.assertEqual(self.window.key, other)
+        self.assertEqual(self.window.view.get_uri(), other_url)
+        self.assertNotIn(other_url, [page["url"] for page in self.window.store.task(owner)["links"]])
+
+    def test_terminal_printed_url_and_existing_section_are_preserved(self):
+        url = "http://127.0.0.1:9/printed-report"
+        self.window.store.save_link(self.window.key, url, "Report", "Review")
+        event = self.terminal_link_event(f"({url}).", url)
+        self.click_terminal(event)
+        self.assertEqual(self.window.section, "Review")
+        self.assertFalse(self.window.showing_home)
+        self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
+
+    def test_repeated_terminal_and_agent_links_preserve_original_live_tab(self):
+        url = "http://127.0.0.1:9/repeated"
+        self.window.store.save_link(self.window.key, url, "Report", "Review")
+        self.window.open_terminal_url(url, self.window.key)
+        pump()
+        original, view = self.window.active_page, self.window.view
+        self.window.open_terminal_url(url + "#details", self.window.key)
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.window.active_page, original)
+        request = {"schema": 1, "endpoint": self.context["endpoint"],
+                   "boot_id": self.context["boot_id"], "key": self.window.key,
+                   "tab_id": "t1", "created_at": time.time(), "url": url,
+                   "title": "", "section": "Different section",
+                   "focus": False, "background": False}
+        self.window.pending_route = request
+        self.window.poll_routes()
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.window.section, "Review")
+        self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
+        self.assertNotIn("Different section", self.window.store.task(self.window.key)["sections"])
+
+    def test_terminal_drag_and_shift_selection_do_not_open_url(self):
+        url = "http://127.0.0.1:9/selection"
+        event = self.terminal_link_event(url, url)
+        self.window.terminal.emit("button-press-event", event)
+        released = Gdk.Event.new(Gdk.EventType.BUTTON_RELEASE)
+        released.window, released.button = event.window, 1
+        released.x, released.y = event.x + 40, event.y
+        self.window.terminal.emit("button-release-event", released)
+        pump()
+        self.assertFalse(self.window.store.task(self.window.key)["links"])
+        event.state = Gdk.ModifierType.SHIFT_MASK
+        self.click_terminal(event)
+        self.assertFalse(self.window.store.task(self.window.key)["links"])
+
+    def test_terminal_physical_drag_selects_text_without_opening_website(self):
+        url = "http://127.0.0.1:9/drag-selection"
+        event = self.terminal_link_event(url, url)
+        click_native_terminal(event, drag_dx=80)
+        self.assertTrue(self.window.terminal.get_has_selection())
+        self.assertFalse(self.window.store.task(self.window.key)["links"])
+
+    def test_terminal_opt_out_uses_previous_browser_and_never_creates_view(self):
+        url = "http://127.0.0.1:9/off-link"
+        self.window.toggle.set_active(False)
+        pump()
+        event = self.terminal_link_event(url, url)
+        with patch("herdr_browser.app.open_external") as external:
+            self.click_terminal(event)
+            external.assert_called_once_with(url)
+        self.assertIsNone(self.window.engine)
+        self.assertIsNone(self.window.view)
+
+    def test_terminal_non_web_link_does_not_open_and_changed_task_is_rejected(self):
+        event = self.terminal_link_event("http://127.0.0.1:9/old-task",
+                                         "http://127.0.0.1:9/old-task")
+        self.window.terminal.emit("button-press-event", event)
+        old_key = self.window.key
+        self.context["focused_tab_id"] = "t2"
+        atomic_json(self.window.context_path, self.context)
+        pump()
+        self.window.open_terminal_url("http://127.0.0.1:9/old-task", old_key)
+        self.assertFalse(self.window.store.task(self.window.key)["links"])
+        self.window.terminal.reset(True, True)
+        self.window.terminal.feed(b"\x1b]8;;file:///tmp/report\x1b\\Local file\x1b]8;;\x1b\\")
+        pump()
+        self.assertIsNone(self.window.terminal_url(event))
+
+    def test_inline_close_inactive_page_preserves_live_page(self):
+        first = self.window.store.save_link(self.window.key, "https://example.com/one", "One")
+        second = self.window.store.save_link(self.window.key, "https://example.com/two", "Two")
+        self.window.open_page(None, first)
+        view = self.window.view
+        button = next(button for button in self.window.page_buttons
+                      if button.get_tooltip_text().startswith("Two\n"))
+        close = next(child for child in button.get_parent().get_children() if child is not button)
+        close.clicked()
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.window.active_page, first)
+        self.assertNotIn(second, [link["id"] for link in self.window.store.task(self.window.key)["links"]])
+
+    def test_installed_update_detection_and_failed_restart_preserve_interface(self):
+        import hashlib
+        source = Path(self.tmp.name) / "installed-update.py"
+        source.write_text("old")
+        self.window.loaded_sources = {source: hashlib.sha256(source.read_bytes()).digest()}
+        self.window.update_stamps = {}
+        self.window.next_update_check = 0
+        self.window.check_updates()
+        self.assertFalse(self.window.update_button.get_sensitive())
+        source.write_text("new")
+        self.window.next_update_check = 0
+        self.window.check_updates()
+        self.assertTrue(self.window.update_button.get_sensitive())
+        with patch("herdr_browser.app.subprocess.Popen",
+                   side_effect=OSError("Private test launch failure")):
+            self.window.apply_update()
+        self.assertFalse(self.window.closed)
+        self.assertIn("Update could not start", self.window.message.get_text())
+
+    def test_many_saved_pages_do_not_create_more_webviews_or_wide_tab_strip(self):
+        key = self.window.key
+        for i in range(100):
+            self.window.store.save_link(key, f"https://example.com/{i}", f"Page {i}")
+        self.window.refresh_pages()
+        self.assertEqual(len(self.window.links), 100)
+        self.assertLessEqual(len(self.window.page_buttons), 3)
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+        self.window.page_picker.set_active(100)
+        self.assertEqual(self.window.active_page, self.window.links[-1]["id"])
+        self.assertLessEqual(len(self.window.page_buttons), 3)
+        self.assertEqual(len(self.window.web_holder.get_children()), 1)
+
+    def test_compact_window_keeps_browser_controls_inside_its_pane(self):
+        self.assertIn("Session: ui-test", self.window.heading.get_tooltip_text())
+        for index in range(8):
+            self.window.store.save_link(
+                self.window.key, f"https://example.com/{index}", "A very long page title")
+        self.window.refresh_pages()
+        self.window.resize(1100, 700)
+        self.window.paned.set_position(600)
+        pump(1.0)
+        self.assertLessEqual(self.window.get_size()[0], 1100)
+        pane_width = self.window.browser_box.get_allocated_width()
+        for widget in (self.window.address, self.window.page_picker,
+                       self.window.section_picker, *self.window.page_buttons):
+            position = widget.translate_coordinates(self.window.browser_box, 0, 0)
+            description = (widget.get_name(), position, widget.get_allocated_width(), pane_width)
+            self.assertGreaterEqual(position[0], 0, description)
+            self.assertLessEqual(position[0] + widget.get_allocated_width(), pane_width, description)
+
+    def test_no_browser_launch_does_not_initialize_engine(self):
+        self.window.on_close()
+        self.window.destroy()
+        self.args.no_browser = True
+        self.window = BrowserWindow(self.args)
+        pump()
+        self.assertIsNone(self.window.engine)
+        self.assertIsNone(self.window.view)
+        self.assertFalse(self.window.browser_box.get_visible())
+        # Also verify a fresh interpreter never imports the browser dependency.
+        code = f"""
+import argparse, sys
+from pathlib import Path
+from herdr_browser.app import BrowserWindow
+from herdr_browser.test_app import pump
+args = argparse.Namespace(client=Path({str(self.args.client)!r}), session='ui-test',
+                          no_browser=True, browser=False)
+window = BrowserWindow(args)
+pump(.2)
+assert window.engine is None
+assert 'gi.repository.WebKit2' not in sys.modules
+window.on_close()
+window.destroy()
+pump(.1)
+"""
+        subprocess.run(["/usr/bin/python3", "-c", code], check=True, timeout=15,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+
+    def test_spawn_does_not_reinherit_the_calling_herdr_pane(self):
+        self.window.on_close()
+        self.window.destroy()
+        captured = Path(self.tmp.name) / "child-environment.json"
+        client = Path(self.tmp.name) / "capture-client"
+        names = ("HERDR_ENV", "HERDR_TAB_ID", "HERDR_PANE_ID",
+                 "HERDR_WORKSPACE_ID", "HERDR_CLIENT_SOCKET_PATH", "HERDR_SOCKET_PATH")
+        client.write_text(
+            "#!/usr/bin/python3\nimport json, os\nfrom pathlib import Path\n"
+            f"Path({str(captured)!r}).write_text(json.dumps("
+            f"{{name: os.environ.get(name) for name in {names!r}}}))\n"
+            "os.execv('/bin/cat', ['cat'])\n")
+        client.chmod(0o700)
+        old = {name: os.environ.get(name) for name in names}
+        try:
+            os.environ.update({name: "calling-pane-value" for name in names})
+            os.environ["HERDR_ENV"] = "1"
+            self.args.client = client
+            self.args.no_browser = True
+            self.window = BrowserWindow(self.args)
+            pump(0.5)
+            child = json.loads(captured.read_text())
+            self.assertEqual(child, {name: None for name in names})
+        finally:
+            for name, value in old.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+
+if __name__ == "__main__":
+    unittest.main()

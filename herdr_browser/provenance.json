@@ -1,0 +1,34 @@
+{
+  "version": "v0",
+  "upstream": "https://github.com/herdrdev/herdr",
+  "upstream_tag": "v0.9.3",
+  "upstream_commit": "7b116c05bfda646af39d2524c54e70c751f57ee8",
+  "upstream_license": "Apache-2.0",
+  "snapshot_utc": "2026-11-19T02:12:54+00:00",
+  "source": "Snapshot of the installed companion, with private task adapters and site-specific defaults excluded.",
+  "installed_source_sha256": {
+    "__init__.py": "a616b4f6820441cf1e20c703066f25ef0b1c7672f68d5ebd2e429ff8f23203fa",
+    "__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+    "app.py": "2e3ac29f7cf4b258b2547fdbeb2885165c1c24fb403bc0aae7a9dfc20e987f59",
+    "cli.py": "932142bce3cbd342805de6ab4d84d04831e754609a8b5599fff018c575662532",
+    "desktop.py": "d8ca126089f751fccd8f8fd39a826f5acbb3ed4c5487f5e7493211567b7f6c63",
+    "install.py": "280e203f1d9574eb44f1ef1fee3b5f855fa9feeccb68576ba02ac9882905610b",
+    "install_clipboard.py": "ba7048c5faecd1214d4bdd0eee77e4d1300577fc10538b862566f606b176ab8a",
+    "interactive_curve.js": "835758b2d3b9ac9e67bcd176ca3d4b46657855bd3a63328e2ebc904fd683bd11",
+    "presentation.py": "0f4a0ceea4507f6b56f60b1ae8ae3009979215156c969c407eb206648bc0474d",
+    "recency.py": "9d11ef76c950a1af39e7aae258eb81e57a706afe952c3964d1467569c6e63958",
+    "report_view.js": "998e23ce8ff2fd0dc1dd8114b067d000db238902521171a6ef8037a30c37686b",
+    "reports.py": "69da9ad09e84ecbb17c70872274a10fb725614ef7f10a2b0951a0d093c96198d",
+    "review_state.js": "a69ae499d2750452b57a62e9557af8451795637f6180e7e4e206474c4b4cf5f7",
+    "router.py": "5837e0819d96ec3c38cb9facd95af292ef94397371ae7b72259e73b69f1db06a",
+    "serve_reports.py": "da5cc162b3039ecc07761ebf47c7c212bfbddd3c15df7684af64247f39041ea6",
+    "session_view.js": "8c76548d8fac5b257168cd99288b4b9738964668f15a0a5871e91a8c3fbe0fd3",
+    "store.py": "53c4f25adab40286be809a0ff43b38cd425644e9a10bd70c1bbe9d64bf659ab7"
+  },
+  "public_changes": [
+    "Removed private report data and adapters keyed to individual tasks.",
+    "Made Firefox hostname exceptions configurable through HERDR_BROWSER_FIREFOX_HOSTS.",
+    "Added a release installer and public documentation."
+  ],
+  "client_sha256": "402641b68cf268bfb7e31a3249ebae573c85994f9d5b6b08dc4da3b5a55104ee"
+}
