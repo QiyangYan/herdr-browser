@@ -48,6 +48,25 @@ class ReportTests(unittest.TestCase):
         unchanged = self.reports.update(self.owner, {"summary": "Revised plan", "results": "Passed"})
         self.assertEqual(unchanged["revision"], 2)
 
+    def test_publisher_commits_while_a_reader_keeps_its_snapshot(self):
+        first = self.reports.update(self.owner, {"summary": "Before"}, goal="concurrent")
+        with self.reports.connect() as reader:
+            reader.execute("BEGIN")
+            old = reader.execute("SELECT revision FROM goals WHERE id='concurrent'").fetchone()[0]
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                new = executor.submit(self.reports.update, self.owner,
+                                      {"summary": "After"}, "concurrent").result(timeout=2)
+            self.assertEqual(reader.execute(
+                "SELECT revision FROM goals WHERE id='concurrent'").fetchone()[0], old)
+        self.assertEqual(new["revision"], first["revision"] + 1)
+        self.assertEqual(self.reports.get(self.owner, "concurrent")["summary"], "After")
+        self.assertEqual(len(self.reports.history(self.owner, "concurrent")), 2)
+
+    def test_healthy_server_check_does_not_take_a_task_transaction(self):
+        self.server.next_check = 0
+        with patch.object(self.store, "transaction", side_effect=AssertionError("Unexpected task lock")):
+            self.assertEqual(self.server.ensure(), self.server.base)
+
     def test_new_outcomes_and_actual_tasks_remain_separate(self):
         first = self.reports.update(self.owner, {"summary": "Tabs"}, new_title="Tabs")
         second = self.reports.update(self.owner, {"summary": "Auth"}, new_title="Sign-in")

@@ -9,11 +9,25 @@ import time
 import subprocess
 import hashlib
 import sys
+import threading
 
-import gi
-gi.require_version("Gtk", "3.0")
-gi.require_version("Vte", "2.91")
-from gi.repository import Gtk, GLib, Vte, Pango, Gdk, Gio
+# Configure before importing GDK/GTK, which opens the default display. Prefer
+# XWayland for GTK3/WebKit display stability, with Wayland as a fallback.
+# Gdk.set_allowed_backends() filters backends but does not prefer their order.
+# Restore the environment immediately so child applications keep their defaults.
+_prefer_x11 = ("GDK_BACKEND" not in os.environ and os.environ.get("WAYLAND_DISPLAY")
+               and os.environ.get("DISPLAY"))
+if _prefer_x11:
+    os.environ["GDK_BACKEND"] = "x11,wayland"
+try:
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Vte", "2.91")
+    gi.require_version("Gdk", "3.0")
+    from gi.repository import Gtk, GLib, Vte, Pango, Gdk, Gio
+finally:
+    if _prefer_x11:
+        os.environ.pop("GDK_BACKEND", None)
 
 from .store import (Store, atomic_json, task_key, task_home, checked_url,
                     status_label, task_caption, find_page, url_identity, ZOOM_LIMITS)
@@ -873,15 +887,60 @@ class BrowserWindow(Gtk.Window):
                 self.search_page()
 
     def push_navigation_state(self, force=False):
-        """Tiny shared read model; no extra process or live browser view."""
+        """Coalesce database work off the GTK thread; never queue stale reads."""
         if not self.key:
+            return
+        if getattr(self, "navigation_pending", False):
+            self.navigation_again = getattr(self, "navigation_again", False) or force
             return
         now = time.monotonic()
         if not force and now < getattr(self, "next_navigation_state", 0):
             return
         self.next_navigation_state = now + 2
-        rows = self.report_server.navigation_rows(session_id(self.store.task(self.key))) or []
-        spaces = session_snapshot(rows, include_completed=True)
+        key, view = self.key, self.view
+        uri = (view.get_uri() or "") if view else ""
+        location = self.report_server.parse_url(uri)
+        self.navigation_pending = True
+
+        def read():
+            result, error = None, None
+            try:
+                own_session = session_id(self.store.task(key))
+                spaces = session_snapshot(self.report_server.navigation_rows(own_session) or [],
+                                          include_completed=True)
+                displayed_session = (location or {}).get("session")
+                if location and location["kind"] == "task":
+                    owner = self.store.task(location["owner"])
+                    displayed_session = session_id(owner) if owner.get("connection") else None
+                displayed = spaces
+                if displayed_session and displayed_session != own_session:
+                    displayed = session_snapshot(
+                        self.report_server.navigation_rows(displayed_session) or [], include_completed=True)
+                result = spaces, displayed
+            except Exception as caught:
+                error = str(caught)
+            GLib.idle_add(self.finish_navigation_state, key, view, uri, force, result, error)
+
+        threading.Thread(target=read, name="herdr-navigation", daemon=True).start()
+
+    def finish_navigation_state(self, key, view, uri, force, result, error):
+        self.navigation_pending = False
+        again = getattr(self, "navigation_again", False)
+        self.navigation_again = False
+        if self.closed:
+            return False
+        if key != self.key or view is not self.view or (view and uri != (view.get_uri() or "")):
+            self.push_navigation_state(force=True)
+            return False
+        if error:
+            self.report("Session navigation is waiting for storage; the page remains available.")
+        elif result:
+            self.apply_navigation_state(*result, force=force)
+        if again:
+            self.push_navigation_state(force=True)
+        return False
+
+    def apply_navigation_state(self, spaces, displayed, force=False):
         self.task_attention = {task["owner"]: (task["color"], task["attention"])
                                for space in spaces for task in space["tasks"]}
         self.unseen_finishes = {task["owner"] for space in spaces for task in space["tasks"]
@@ -898,14 +957,7 @@ class BrowserWindow(Gtk.Window):
         location = self.report_server.parse_url(self.view.get_uri() or "") if self.view else None
         if not location:
             return
-        displayed_session = location.get("session")
-        if location["kind"] == "task":
-            displayed_owner = self.store.task(location["owner"])
-            displayed_session = session_id(displayed_owner) if displayed_owner.get("connection") else None
-        own_session = session_id(self.store.task(self.key))
-        if displayed_session and displayed_session != own_session:
-            spaces = session_snapshot(self.report_server.navigation_rows(displayed_session) or [], include_completed=True)
-        value = json.dumps({"spaces": spaces, "base": self.report_server.base}, ensure_ascii=True)
+        value = json.dumps({"spaces": displayed, "base": self.report_server.base}, ensure_ascii=True)
         if not force and value == getattr(self, "navigation_signature", None):
             return
         self.navigation_signature = value
@@ -1160,9 +1212,18 @@ class BrowserWindow(Gtk.Window):
 
     def refresh_pages(self):
         row = self.store.task(self.key) if self.key else {}
+        section_names = list(row.get("sections", {}))
+        links = [link for link in row.get("links", [])
+                 if link["section"] == self.section]
+        signature = (self.key, self.section, self.active_page,
+                     tuple((link["id"], link["title"], link["url"]) for link in links),
+                     self.showing_home, tuple(section_names))
+        if signature == self.page_signature:
+            return
+        self.page_signature = signature
         self.section_picker.set_sensitive(bool(self.key))
         self.page_picker.set_sensitive(bool(self.key))
-        self.section_names = list(row.get("sections", {}))
+        self.section_names = section_names
         self.section_picker.handler_block_by_func(self.select_section)
         self.section_picker.remove_all()
         for name in self.section_names:
@@ -1171,14 +1232,6 @@ class BrowserWindow(Gtk.Window):
             self.section_picker.set_active(self.section_names.index(self.section))
             self.section_picker.set_tooltip_text(f"Subplan section · {self.section}")
         self.section_picker.handler_unblock_by_func(self.select_section)
-        links = [link for link in row.get("links", [])
-                 if link["section"] == self.section]
-        signature = (self.key, self.section, self.active_page,
-                     tuple((link["id"], link["title"], link["url"]) for link in links),
-                     self.showing_home)
-        if signature == self.page_signature:
-            return
-        self.page_signature = signature
         self.links = links
         self.page_picker.handler_block_by_func(self.select_page)
         self.page_picker.remove_all()

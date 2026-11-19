@@ -55,6 +55,17 @@ Use **Next action** for a short reminder. Each section remembers its selected
 page. Closing the window detaches its own client; the Herdr
 session and its task processes continue.
 
+On desktops offering both X11 and Wayland, the companion prefers X11 for GTK3
+display compatibility. An explicit `GDK_BACKEND` setting takes precedence;
+Wayland remains the fallback when X11 is unavailable. This does not change
+desktop associations or the environment inherited by launched applications.
+See the [browser stability changes](browser-stability.html) for measurements
+and verification limits.
+
+Report storage uses SQLite WAL so readers do not block publishing. Use SQLite's
+backup API for a live backup, or include the database's WAL; copying only
+`reports.sqlite3` while it is active may omit recent updates.
+
 ## Living pages and session overview
 
 Use one living home page per main task. Evaluation, debugging, setup and previews

@@ -69,7 +69,15 @@
   }
   window.InteractiveCurve = {
     mount(holder, chart, key) {
-      if (holder._updateCurve?.(chart, key)) return;
+      // A different metric may receive samples while the selected metric is
+      // unchanged. Keep its plot, focus and inspection state intact.
+      const source = JSON.stringify([key, chart]);
+      if (holder._curveSignature === source) return;
+      if (holder._updateCurve?.(chart, key)) {
+        holder._curveSignature = source;
+        return;
+      }
+      holder._curveSignature = source;
       holder._interactiveCleanup?.();
       holder.querySelectorAll('.ic-metric-chart').forEach(inner => inner._interactiveCleanup?.());
       holder._updateCurve = null;

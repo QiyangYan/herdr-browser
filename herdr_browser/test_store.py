@@ -3,9 +3,11 @@ import multiprocessing
 import os
 from pathlib import Path
 import tempfile
+import fcntl
+import threading
 import unittest
 
-from .store import Store, checked_url, task_key, task_home, find_page
+from .store import Store, checked_url, task_key, task_home, find_page, atomic_json
 
 
 def write_link(home, key, index):
@@ -64,6 +66,39 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "preserved"):
             self.store.preference(False)
         self.assertEqual(self.store.path.read_text(), "{broken")
+
+    def test_cached_reads_are_isolated_and_notice_atomic_external_updates(self):
+        self.store.task(self.first)["label"] = "Unsaved change"
+        self.store.read()["tasks"][self.first]["label"] = "Another unsaved change"
+        self.assertEqual(self.store.task(self.first)["label"], "First")
+        other = Store(self.tmp.name)
+        with other.transaction() as data:
+            data["tasks"][self.first]["label"] = "External change"
+        self.assertEqual(self.store.task(self.first)["label"], "External change")
+        before = self.store.path.stat()
+        data = self.store.read()
+        data["tasks"][self.first]["label"] = "Replaced change"
+        atomic_json(self.store.path, data)
+        os.utime(self.store.path, ns=(before.st_atime_ns, before.st_mtime_ns))
+        self.assertEqual(self.store.task(self.first)["label"], "Replaced change")
+
+    def test_readers_do_not_wait_for_an_active_writer(self):
+        # The last atomic snapshot is complete even while another publisher
+        # holds its transaction open. Test both cold and cached reads.
+        done = threading.Event()
+        results = []
+        def read():
+            reader = Store(self.tmp.name)
+            results.extend([reader.task(self.first), reader.task(self.first)])
+            done.set()
+        with open(self.store.home / "tasks.lock", "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            thread = threading.Thread(target=read, daemon=True)
+            thread.start()
+            ready = done.wait(1)
+        thread.join(2)
+        self.assertTrue(ready, "Read-only task snapshots must not wait for the writer lock")
+        self.assertEqual([row["label"] for row in results], ["First", "First"])
 
     def test_browser_off_survives_relaunch(self):
         self.store.preference(False)

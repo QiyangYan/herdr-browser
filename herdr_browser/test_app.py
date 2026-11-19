@@ -10,6 +10,7 @@ import unittest
 import signal
 import subprocess
 import ctypes
+import threading
 from ctypes.util import find_library
 from unittest.mock import Mock, patch
 
@@ -141,6 +142,75 @@ class NativeTests(unittest.TestCase):
         self.window.toggle.set_active(True)
         pump()
         self.assertIsNotNone(self.window.view)
+
+    def test_navigation_storage_wait_does_not_block_ui_or_apply_to_a_new_task(self):
+        pump(.3)
+        started, release = threading.Event(), threading.Event()
+        original = self.window.report_server.navigation_rows
+        keys = []
+        def slow(session):
+            keys.append(session)
+            started.set()
+            release.wait(3)
+            return original(session)
+        with patch.object(self.window.report_server, "navigation_rows", side_effect=slow):
+            self.window.push_navigation_state(force=True)
+            self.assertTrue(started.wait(1))
+            ticks = []
+            GLib.idle_add(lambda: ticks.append(True) and False)
+            for _ in range(10):
+                self.window.push_navigation_state(force=True)
+            pump(.1)
+            self.assertTrue(ticks, "GTK must still dispatch events during a storage wait")
+            self.assertEqual(len(keys), 1, "Repeated refreshes must not queue database workers")
+            old_key = self.window.key
+            self.context["focused_tab_id"] = "t2"
+            atomic_json(self.window.context_path, self.context)
+            pump(.3)
+            self.assertNotEqual(self.window.key, old_key)
+            release.set()
+            pump(.8)
+        self.assertFalse(self.window.navigation_pending)
+        self.assertEqual(self.window.key, task_key(self.window.connection, self.context, "t2"))
+
+    def test_unchanged_selected_metric_keeps_plot_and_keyboard_focus(self):
+        script = (Path(__file__).parent / "interactive_curve.js").read_text()
+        self.javascript(script + "; 'loaded'")
+        self.javascript("""(() => {
+          const figure=document.createElement('figure'), holder=document.createElement('div');
+          figure.append(holder);document.body.append(figure);
+          const series=[{label:'Fixture',color:'#2263bd',points:[{x:1,y:.5}]}];
+          window.metricFixture={holder,chart:{title:'Test',series,
+            metrics:[{key:'a',label:'Selected',series},
+                     {key:'b',label:'Other',series:JSON.parse(JSON.stringify(series))}]}};
+          InteractiveCurve.mount(holder,metricFixture.chart,'native-metric-fixture');
+          metricFixture.svg=holder.querySelector('svg');metricFixture.svg.focus();
+          metricFixture.chart.metrics[1].series[0].points.push({x:2,y:.6});
+          InteractiveCurve.mount(holder,metricFixture.chart,'native-metric-fixture');
+          return 'ready';
+        })()""")
+        self.assertEqual(self.javascript(
+            "String(metricFixture.svg===metricFixture.holder.querySelector('svg') && "
+            "document.activeElement===metricFixture.svg)"), "true")
+        self.javascript("""metricFixture.chart.metrics[0].series[0].points.push({x:2,y:.7});
+          InteractiveCurve.mount(metricFixture.holder,metricFixture.chart,'native-metric-fixture');'updated'""")
+        self.assertEqual(self.javascript(
+            "String(metricFixture.svg!==metricFixture.holder.querySelector('svg'))"), "true")
+
+    def test_unrelated_task_updates_do_not_rebuild_the_section_picker(self):
+        changes = []
+        model = self.window.section_picker.get_model()
+        connection = model.connect("row-deleted", lambda *args: changes.append(True))
+        try:
+            other = task_key(self.window.connection, self.context, "t2")
+            self.window.store.set_value(other, "next_action", "Updated elsewhere")
+            self.window.refresh_pages()
+            self.assertFalse(changes)
+            self.window.store.add_section(self.window.key, "New section")
+            self.window.refresh_pages()
+            self.assertIn("New section", self.window.section_names)
+        finally:
+            model.disconnect(connection)
 
     def test_task_picker_uses_private_request_and_waits_for_client_focus(self):
         original = self.window.key

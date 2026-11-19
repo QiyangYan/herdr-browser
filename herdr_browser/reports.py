@@ -270,6 +270,9 @@ class Reports:
         self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.path = self.home / "reports.sqlite3"
         with self.connect() as db:
+            # Report readers must not hold up publishers (or the reverse).
+            # WAL keeps a consistent snapshot without deleting any history.
+            db.execute("PRAGMA journal_mode=WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS goals (
                     owner TEXT NOT NULL, id TEXT NOT NULL, state TEXT NOT NULL,
@@ -1207,6 +1210,12 @@ class ReportServer:
         if time.monotonic() < self.next_check:
             return self.base
         self.next_check = time.monotonic() + 2
+        # The owner record is replaced atomically. Healthy peers need no task
+        # transaction; only electing a new server requires the shared lock.
+        config = json.loads(self.config_path.read_text()) if self.config_path.exists() else None
+        if config and config.get("pid") and process_token(config["pid"]) == config.get("process_token"):
+            self.config = config
+            return self.base
         with self.store.transaction():
             config = json.loads(self.config_path.read_text()) if self.config_path.exists() else None
             if config and config.get("pid") and process_token(config["pid"]) == config.get("process_token"):

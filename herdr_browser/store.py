@@ -1,5 +1,6 @@
 """Private, atomic task state shared by optional browser windows."""
 import contextlib
+import copy
 import fcntl
 import hashlib
 import html
@@ -7,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 import uuid
 from urllib.parse import urlsplit, unquote_plus
@@ -154,12 +156,14 @@ class Store:
         self.home = Path(home or browser_home())
         self.home.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.path = self.home / "tasks.json"
+        self._cached_snapshot = None
+        self._snapshot_lock = threading.RLock()
 
     @contextlib.contextmanager
-    def transaction(self):
+    def transaction(self, blocking=True):
         fd = os.open(self.home / "tasks.lock", os.O_CREAT | os.O_RDWR, 0o600)
         with os.fdopen(fd, "a+") as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             if self.path.exists():
                 try:
                     data = json.loads(self.path.read_text())
@@ -177,10 +181,48 @@ class Store:
             yield data
             if json.dumps(data, sort_keys=True) != before:
                 atomic_json(self.path, data)
+                self._cached_snapshot = None
+
+    @staticmethod
+    def _stamp(stat):
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def _snapshot(self):
+        """Read an atomic file snapshot without waiting for a writer's lock."""
+        with self._snapshot_lock:
+            try:
+                stamp = self._stamp(self.path.stat())
+            except FileNotFoundError:
+                return {"schema": 1, "tasks": {}, "browser_enabled": True}
+            if self._cached_snapshot and self._cached_snapshot[0] == stamp:
+                return self._cached_snapshot[1]
+            with self.path.open() as stream:
+                stamp = self._stamp(os.fstat(stream.fileno()))
+                try:
+                    data = json.load(stream)
+                    if data.get("schema") != 1 or not isinstance(data.get("tasks"), dict):
+                        raise ValueError("Unsupported task state")
+                except (ValueError, TypeError, AttributeError) as error:
+                    raise ValueError(
+                        f"Cannot read {self.path}; it has been preserved: {error}"
+                    ) from error
+            before = copy.deepcopy(data)
+            for row in data["tasks"].values():
+                organized_task(row)
+            if data != before:
+                # Persist legacy repairs only after re-reading under the writer
+                # lock. A busy publisher must not block readers or lose its work.
+                try:
+                    with self.transaction(blocking=False):
+                        pass
+                except BlockingIOError:
+                    pass
+                return data
+            self._cached_snapshot = (stamp, data)
+            return data
 
     def read(self):
-        with self.transaction() as data:
-            return json.loads(json.dumps(data))
+        return copy.deepcopy(self._snapshot())
 
     def preference(self, enabled):
         with self.transaction() as data:
@@ -204,8 +246,7 @@ class Store:
         return value
 
     def task(self, key):
-        row = self.read()["tasks"].get(key, {})
-        return organized_task(row) if row else {}
+        return copy.deepcopy(self._snapshot()["tasks"].get(key, {}))
 
     def register_context(self, connection, context):
         workspace_labels = {row["workspace_id"]: row["label"]
