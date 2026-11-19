@@ -640,6 +640,107 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.window.view.get_uri(), other_url)
         self.assertNotIn(other_url, [page["url"] for page in self.window.store.task(owner)["links"]])
 
+    def click_website(self, selector):
+        """Click the rendered link with a real pointer on the private display."""
+        position = json.loads(self.javascript(f"""(() => {{
+            const node = document.querySelector({json.dumps(selector)});
+            node.scrollIntoView({{block: 'center'}});
+            const rect = node.getBoundingClientRect();
+            return JSON.stringify([rect.x + rect.width / 2, rect.y + rect.height / 2]);
+        }})()"""))
+        x, y = self.window.view.translate_coordinates(self.window, 0, 0)
+        event = Gdk.Event.new(Gdk.EventType.BUTTON_PRESS)
+        event.window = self.window.get_window()
+        event.x, event.y = x + position[0], y + position[1]
+        event.button = 1
+        click_native_terminal(event)
+        pump(.5)
+
+    def test_website_link_opens_saved_report_without_reassigning_its_owner(self):
+        owner = self.window.key
+        reports = self.window.report_server.reports
+        previous = dict(self.context, boot_id="previous-server-boot")
+        self.window.store.register_context(self.window.connection, previous)
+        previous_owner = task_key(self.window.connection, previous, "t1")
+        reports.update(previous_owner, {"summary": "Recorded earlier"},
+                       goal="saved", new_title="Saved outcome")
+        saved_url = self.window.report_server.task_url(previous_owner, "saved")
+        reports.update(owner, {"references": [{"title": "Saved report", "url": saved_url}]},
+                       goal="source", new_title="Current outcome")
+        source_url = self.window.report_server.task_url(owner, "source")
+        for target in ("_self", "_blank"):
+            with self.subTest(target=target):
+                self.window.open_terminal_url(source_url, owner)
+                pump(.5)
+                self.javascript(f'document.querySelector(".linked-pages a").target={json.dumps(target)}; "ready"')
+                self.click_website(".linked-pages a")
+                self.assertEqual(self.window.view.get_uri(), saved_url)
+                self.assertEqual(self.javascript("document.querySelector('h1').textContent"), "Saved outcome")
+                self.assertEqual(self.window.key, owner)
+                self.assertFalse(self.window.context_path.with_suffix(".request").exists())
+                self.assertEqual(reports.get(previous_owner, "saved")["owner"], previous_owner)
+                self.assertIsNone(reports.get(owner, "saved"))
+                self.assertEqual({row["url"] for row in self.window.store.task(owner)["links"]},
+                                 {source_url, saved_url})
+
+    def test_website_section_link_opens_and_scrolls_to_closed_appendix(self):
+        owner = self.window.key
+        self.window.report_server.reports.update(owner, {
+            "summary": "Read the [saved settings](#settings).",
+            "sections": [{"id": "settings", "title": "Saved settings", "text": "Recorded value: 42."}],
+        }, goal="sections", new_title="Section navigation")
+        url = self.window.report_server.task_url(owner, "sections")
+        self.window.open_terminal_url(url, owner)
+        pump(.5)
+        self.javascript("document.querySelector('#settings').open=false; 'closed'")
+        view = self.window.view
+        self.click_website('#task-summary a[href="#settings"]')
+        self.assertIs(self.window.view, view)
+        self.assertEqual(self.javascript("location.hash"), "#settings")
+        self.assertEqual(self.javascript("String(document.querySelector('#settings').open)"), "true")
+        self.assertEqual(self.javascript("""String((() => {
+            const box = document.querySelector('#settings summary').getBoundingClientRect();
+            return box.top >= 0 && box.top < innerHeight;
+        })())"""), "true")
+
+    def test_website_reference_click_loads_destination_and_preserves_report(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        import threading
+
+        class Website(BaseHTTPRequestHandler):
+            def do_GET(self):
+                body = b"<title>Reference website</title><h1>Reference website</h1>"
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Website)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        destination = f"http://127.0.0.1:{server.server_port}/reference"
+        owner = self.window.key
+        self.window.report_server.reports.update(owner, {
+            "references": [{"title": "Open reference website", "url": destination}],
+        }, goal="reference-source", new_title="Reference source")
+        source_url = self.window.report_server.task_url(owner, "reference-source")
+        for target in ("_self", "_blank"):
+            with self.subTest(target=target):
+                self.window.open_terminal_url(source_url, owner)
+                pump(.5)
+                self.javascript(f'document.querySelector(".linked-pages a").target={json.dumps(target)}; "ready"')
+                self.click_website(".linked-pages a")
+                self.assertEqual(self.window.view.get_uri(), destination)
+                self.assertEqual(self.window.view.get_title(), "Reference website")
+                self.assertEqual({row["url"] for row in self.window.store.task(owner)["links"]},
+                                 {source_url, destination})
+                self.assertEqual(len(self.window.web_holder.get_children()), 1)
+
     def test_terminal_printed_url_and_existing_section_are_preserved(self):
         url = "http://127.0.0.1:9/printed-report"
         self.window.store.save_link(self.window.key, url, "Report", "Review")

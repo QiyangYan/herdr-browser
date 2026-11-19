@@ -28,6 +28,7 @@ this later addition.
 [See the visual change summary](https://qiyangyan.github.io/herdr-browser/dashboard-update.html).
 [See how live report updates preserve your place](https://qiyangyan.github.io/herdr-browser/dashboard-refresh.html).
 [See the responsiveness and link-retry adjustments](https://qiyangyan.github.io/herdr-browser/report-performance.html).
+[See how website links open saved reports across sessions](https://qiyangyan.github.io/herdr-browser/website-links.html).
 
 | Read | Act |
 | --- | --- |

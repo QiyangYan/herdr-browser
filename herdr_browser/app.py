@@ -1077,6 +1077,12 @@ class BrowserWindow(Gtk.Window):
         known = self.report_server.reports.get(owner, parsed["goal"])
         target = next((task for task in self.context.get("tasks", [])
                        if task_key(self.connection, self.context, task["tab_id"]) == owner), None)
+        if not target and known:
+            # Reports outlive their original server session. Keep their owner
+            # in the URL and open a reference rather than guessing a live task.
+            self.open_terminal_url(url, self.key)
+            self.report("Opened saved report; its original task is not active in this session.")
+            return False
         if not target or (not known and parsed["goal"] != "start"):
             self.report("This report's Herdr task is no longer available in this session.")
             return False
