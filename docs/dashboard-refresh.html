@@ -168,7 +168,7 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 <p><a href="https://github.com/QiyangYan/herdr-browser">Back to Herdr Browser</a></p>
 <h1>Steady dashboard refresh</h1>
 <p><strong>Implemented and verified:</strong> new report data no longer rebuilds the session dashboard.</p>
-<p class="status">Recorded 2026-11-19T08:39:12+00:00</p>
+<p class="status">Recorded 2026-11-19T08:40:13+00:00</p>
 <figure class="flow-diagram"><h2>New data updates the existing dashboard</h2><ol class="flow-steps"><li><strong>Saved data changes</strong><span>The existing report and dashboard polls detect the update.</span></li><li><strong>Keep the dashboard</strong><span>Its rows, history and controls stay mounted.</span></li><li><strong>Change the affected fields</strong><span>New status, text and timestamps appear in place.</span></li></ol><figcaption>Arrows show the update sequence. Polling continues at its existing cadence.</figcaption></figure>
 <h2>Why the dashboard could flash</h2>
 <p>A report update removed and recreated the dashboard. A timestamp-only dashboard update also replaced every row.
@@ -189,7 +189,7 @@ without changing the server API or stored records.</p>
 <ul>
 <li><strong>v0:</strong> original release, <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li>
 <li><strong>Shared dashboard:</strong> <code>e998eeeb10b32e4a03fd47716536425bba77df75</code>.</li>
-<li><strong>Refresh fix:</strong> Uncommitted working-tree changes.</li>
+<li><strong>Refresh fix:</strong> Source commit: <code>3ea97d64c642ae6925e7e81da7d4151d517f16dd</code>.</li>
 </ul>
 </details>
 </main></body></html><script id="herdr-figure-inspection">/* Portable measured-curve renderer. No external libraries or inferred timestamps. */
