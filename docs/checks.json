@@ -1,8 +1,8 @@
 {
-  "snapshot_utc": "2026-11-19T02:35:56+00:00",
-  "headline": "v0 is public and its one-command installation passed with a fresh user profile.",
-  "release_status": "Published on GitHub; anonymous installation verified.",
-  "next_action": "Use the install command on Ubuntu 22.04 x86_64; the independent CI rerun is pending.",
+  "snapshot_utc": "2026-11-19T02:39:39+00:00",
+  "headline": "v0 is public: installation, native launch and GitHub CI passed.",
+  "release_status": "Published; anonymous installation and native launch verified. Test-only corrections passed CI at 6693f4b88b78f0116408957f00055476122a9f53.",
+  "next_action": "Install v0 on Ubuntu 22.04 x86_64, then configure your own agent and sign-ins.",
   "checks": [
     {
       "check": "Unit tests",
@@ -40,10 +40,17 @@
       "evidence": "Exact --codex command ran as a second fresh user without GitHub credentials; client and all recorded runtime hashes matched."
     },
     {
+      "check": "Downloaded app launch",
+      "status": "Passed",
+      "evidence": "The publicly installed app opened a native window and created a real Herdr task under the fresh user."
+    },
+    {
       "check": "GitHub CI",
-      "status": "Rerun pending",
-      "evidence": "Local checks passed. CI fixtures now use a local page and an explicit file timestamp; application code is unchanged."
+      "status": "Passed",
+      "evidence": "69 unit tests, 40 native UI contracts and syntax checks passed on GitHub Actions."
     }
   ],
-  "release_commit": "6e30065aacf65875251f439cd4c9612709f761c9"
+  "release_commit": "6e30065aacf65875251f439cd4c9612709f761c9",
+  "ci_url": "https://github.com/QiyangYan/herdr-browser/actions/runs/44445492316",
+  "ci_commit": "6693f4b88b78f0116408957f00055476122a9f53"
 }

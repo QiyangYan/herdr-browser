@@ -30,4 +30,6 @@ The first GitHub run exposed a test depending on the timing of an external
 website title, and a subsequent run exposed two same-size fixture writes sharing
 a filesystem timestamp. The main branch uses a local page and an explicit
 fixture timestamp. The application and immutable v0 assets are unchanged.
-The CI rerun is pending.
+[GitHub CI passed](https://github.com/QiyangYan/herdr-browser/actions/runs/44445492316): 69 unit tests, 40 native UI contracts and syntax checks.
+The app installed directly from the public release also opened a native window
+and created a real Herdr task under the fresh user.
