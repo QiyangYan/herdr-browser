@@ -199,6 +199,10 @@ tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-la
   }
   window.InteractiveCurve = {
     mount(holder, chart, key) {
+      if (holder._updateCurve?.(chart, key)) return;
+      holder._interactiveCleanup?.();
+      holder.querySelectorAll('.ic-metric-chart').forEach(inner => inner._interactiveCleanup?.());
+      holder._updateCurve = null;
       // Preserve saved selections when the report adds the second state student.
       if(chart.title==='Full training loss · state students')try{
         const destination='interactive-curve:'+key, previous='interactive-curve:'+key.replace('Full training loss · state students','Full training loss · teacher-identical student');
@@ -256,6 +260,12 @@ tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-la
           }
           render();
         });
+        const metricSchema = value => JSON.stringify([value.follows_table, value.metrics?.map(m =>
+          [m.key, m.label, m.series.some(s => s.resume_of)])]);
+        holder._updateCurve = (next, nextKey) => {
+          if (nextKey !== key || metricSchema(next) !== metricSchema(chart)) return false;
+          chart = next; render(); return true;
+        };
         render();
         return;
       }
@@ -632,6 +642,20 @@ tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-la
           if(holder.isConnected&&Math.abs(holder.getBoundingClientRect().width-lastWidth)>.5)draw();
         },100);
       };
+      const schema = value => JSON.stringify([
+        value.axes || [{key:'x', label:value.x_label || 'Optimizer updates', divisor:1}],
+        value.y_label, value.metricKey, value.log, value.follows_table,
+        value.series.map(s => [s.label, s.color]), !!value.metrics?.length
+      ]);
+      holder._updateCurve = (next, nextKey) => {
+        if (nextKey !== key || schema(next) !== schema(chart)) return false;
+        chart = next;
+        for (const series of chart.series) {
+          const label = legendButtons.get(series.label)?.lastChild;
+          if (label) label.nodeValue = series.label + (series.points.length ? '' : ' · no measurement');
+        }
+        draw(); return true;
+      };
       const observer=new ResizeObserver(resize);observer.observe(holder);
       // Repeated live renders must release old observers.
       holder._interactiveCleanup?.();holder._interactiveCleanup=()=>observer.disconnect();
@@ -647,13 +671,18 @@ tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-la
       });
       root.querySelectorAll('figure').forEach(figure=>{
         const nodes=[...figure.querySelectorAll('.node,.comparison-node,.flow-step,.flow-steps li,.clarity-flow li')];
-        if(!nodes.length||figure.dataset.interactiveDiagram)return;
+        if(!nodes.length)return;
         figure.dataset.interactiveDiagram='true';
-        const hint=document.createElement('p');hint.className='ic-readout';
-        hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
-        const caption=figure.querySelector('figcaption');figure.insertBefore(hint,caption);
+        let hint=figure.querySelector(':scope > .ic-readout');
+        const caption=figure.querySelector('figcaption');
+        if(!hint){
+          hint=document.createElement('p');hint.className='ic-readout';
+          hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
+          figure.insertBefore(hint,caption);
+        }
         for(const node of nodes){
           node.tabIndex=0;node.title=node.dataset.detail||(node.innerText||node.textContent).trim().replace(/\s+/g,' ');
+          if(node.dataset.diagramBound)continue;node.dataset.diagramBound='true';
           const show=()=>{
             nodes.forEach(n=>n.style.outline='');
             node.style.outline='2px solid #397fb7';
@@ -806,6 +835,7 @@ tbody th,tbody td{border:0;padding:6px 10px}tbody td:before{content:attr(data-la
   'use strict';
   const root = document.querySelector('#task-content');
   const live = root.dataset.live !== 'false';
+  let sourceTree = snapshot(root);
   let etag = null, cursor = null, historyLoaded = false, busy = false, historyBusy = false;
   let legacyHistory = false;
   const escape = value => String(value).replace(/[&<>"']/g, x => ({
@@ -1042,14 +1072,19 @@ figure[id]{scroll-margin-top:24px}
     const charts=[...(state?.curves||[]),...(state?.main_sections||[]).flatMap(s=>s.curves||[]),
                   ...(state?.sections||[]).flatMap(s=>s.curves||[])];
     root.querySelectorAll('figure.learning-curve').forEach((figure,index)=>{
-      if(figure.querySelector('.ic-holder'))return;
+      let holder=figure.querySelector('.ic-holder');
+      if(holder && figure._curveSource === figure.dataset.chart)return;
       let chart;
       try{chart=JSON.parse(figure.dataset.chart);}catch(_){chart=charts.find(c=>c.title===figure.querySelector('h2,h3,h4')?.textContent);}
       if(!chart)return;
-      const holder=document.createElement('div');holder.className='ic-holder';
-      figure.querySelectorAll('.curve-layout,.curve-x-label,.axis-note').forEach(n=>n.remove());
-      figure.insertBefore(holder,figure.querySelector('figcaption'));
-      InteractiveCurve.mount(holder,{...chart,markers:true,series:chart.series.map((s,i)=>({...s,color:colors[i%colors.length]}))},location.pathname+':'+chart.title+':'+index);
+      if(!holder){
+        holder=document.createElement('div');holder.className='ic-holder';
+        figure.querySelectorAll('.curve-layout,.curve-x-label,.axis-note').forEach(n=>n.remove());
+        figure.insertBefore(holder,figure.querySelector('figcaption'));
+      }
+      figure._curveSource=figure.dataset.chart;
+      figure._curveKey ||= location.pathname+':'+chart.title+':'+index;
+      InteractiveCurve.mount(holder,{...chart,markers:true,series:chart.series.map((s,i)=>({...s,color:colors[i%colors.length]}))},figure._curveKey);
     });
     root.querySelectorAll('.bar-row').forEach(row=>{
       const units=row.closest('figure')?.querySelector('.axis-note')?.textContent.trim() || '';
@@ -1321,23 +1356,87 @@ figure[id]{scroll-margin-top:24px}
       cursor = null; historyLoaded = false; event.target.hidden = true; loadHistory();
     }
   });
-  function replaceReport(html) {
-    const content = document.createElement('template');
-    content.innerHTML = html;
-    const dashboard = root.querySelector(':scope > #session-dashboard');
-    if (!dashboard) { root.replaceChildren(content.content); return; }
-    // Keep the dashboard connected: removing/reinserting it loses focused
-    // controls and lets its observer rebuild it during unrelated report updates.
-    const before = document.createDocumentFragment(), after = document.createDocumentFragment();
-    const header = [...content.content.children].find(node => node.matches('header.task-overview'));
-    let passedHeader = !header;
-    for (const node of [...content.content.childNodes]) {
-      (passedHeader ? after : before).append(node);
-      if (node === header) passedHeader = true;
+  // Compare publisher markup with its previous version, not with the enhanced
+  // live DOM. This preserves controls and layout wrappers added by renderers.
+  function bind(source, live) {
+    source._live = live;
+    [...source.childNodes].forEach((child, index) => bind(child, live.childNodes[index]));
+    return source;
+  }
+  function snapshot(live) { return bind(live.cloneNode(true), live); }
+  function inherit(before, after) {
+    after._live = before?._live;
+    [...after.childNodes].forEach((child, index) => inherit(before?.childNodes[index], child));
+  }
+  function identities(parent) {
+    const occurrences = new Map();
+    return [...parent.childNodes].map(node => {
+      let key = node.nodeType === 1 ? node.tagName : '#' + node.nodeType;
+      if (node.id) key += ':' + node.id;
+      else if (node.matches?.('figure')) key += ':' + node.className + ':' + (node.querySelector('h2,h3,h4')?.textContent || '');
+      else if (node.matches?.('tr')) key += ':' + node.firstElementChild?.textContent;
+      const count = occurrences.get(key) || 0; occurrences.set(key, count + 1);
+      return [key + ':' + count, node];
+    });
+  }
+  function dispose(node) {
+    node?._interactiveCleanup?.();
+    node?.querySelectorAll?.('.ic-holder,.ic-metric-chart').forEach(holder => holder._interactiveCleanup?.());
+    node?.remove();
+  }
+  function patchSource(before, after) {
+    const live = before._live; after._live = live;
+    if (before.isEqualNode(after)) { inherit(before, after); return; }
+    if (before.nodeType !== 1) { live.nodeValue = after.nodeValue; return; }
+    // Runtime-only attributes (open state, adapter IDs, classes) are retained.
+    for (const name of new Set([...before.getAttributeNames(), ...after.getAttributeNames()])) {
+      if (before.getAttribute(name) === after.getAttribute(name)) continue;
+      if (after.hasAttribute(name)) live.setAttribute(name, after.getAttribute(name));
+      else live.removeAttribute(name);
     }
-    for (const node of [...root.childNodes]) if (node !== dashboard) node.remove();
-    root.insertBefore(before, dashboard);
-    root.append(after);
+    if (after.matches('figure.learning-curve')) {
+      // The measured-curve renderer updates data within the existing controls.
+      const old = [...before.children], next = [...after.children];
+      for (let i = 0; i < next.length; i++) {
+        if (old[i]?.tagName === next[i].tagName) {
+          if (next[i].matches('h2,h3,h4,figcaption')) patchSource(old[i], next[i]);
+          else inherit(old[i], next[i]);
+        }
+      }
+      return;
+    }
+    const old = identities(before), next = identities(after), oldByKey = new Map(old);
+    const used = new Set(next.map(([key]) => key));
+    // A renderer may have replaced a text node (for example a status cell).
+    // Only that changed container needs fresh publisher markup.
+    if (old.some(([key, node]) => used.has(key) && !node._live?.isConnected)) {
+      live.replaceChildren(...[...after.childNodes].map(node => bind(node, node.cloneNode(true))._live));
+      return;
+    }
+    for (const [key, node] of old) if (!used.has(key)) dispose(node._live);
+    for (const [key, node] of next) {
+      const previous = oldByKey.get(key);
+      if (previous) patchSource(previous, node);
+      else bind(node, node.cloneNode(true));
+    }
+    const commonBefore = JSON.stringify(old.filter(([key]) => used.has(key)).map(([key]) => key));
+    const commonAfter = JSON.stringify(next.filter(([key]) => oldByKey.has(key)).map(([key]) => key));
+    const reordered = commonBefore !== commonAfter;
+    // Leave existing nodes where adapters placed them when source order is
+    // unchanged. Insert new siblings beside the nearest surviving source node.
+    let anchor = null;
+    for (const [key, node] of [...next].reverse()) {
+      const item = node._live;
+      if (!oldByKey.has(key) || (reordered && item.parentNode === live)) live.insertBefore(item, anchor);
+      let direct = item;
+      while (direct?.parentNode && direct.parentNode !== live) direct = direct.parentNode;
+      if (direct?.parentNode === live) anchor = direct;
+    }
+  }
+  function replaceReport(html) {
+    const content = document.createElement('template'); content.innerHTML = html;
+    const next = sourceTree.cloneNode(false); next.append(content.content);
+    patchSource(sourceTree, next); sourceTree = next;
   }
   async function refresh() {
     if (busy || historyBusy || document.hidden || window.getSelection()?.toString()) return;
@@ -1386,7 +1485,7 @@ figure[id]{scroll-margin-top:24px}
       const citationUpgrade = expectedCitations !== root.querySelectorAll('.appendix-citation').length;
       interactiveVisuals(data.state);
       if (!oldLayout && !groupUpgrade && !curveUpgrade && !diagramUpgrade && !flowUpgrade && !proseUpgrade && !listUpgrade && !appendixUpgrade && !mainUpgrade && !objectiveUpgrade && !progressUpgrade && !citationUpgrade && String(data.state.revision) === root.dataset.revision) return;
-      const y = scrollY, focused = document.activeElement?.id;
+      const y = scrollY, focusedNode = document.activeElement, focused = focusedNode?.id;
       const open = Array.from(root.querySelectorAll('details[open]')).map(node => node.id);
       const previousHistory = root.querySelector('#history-items')?.innerHTML;
       const missingCurves = data.state.curves?.length && !data.html.includes('class="learning-curve"');
@@ -1401,6 +1500,7 @@ figure[id]{scroll-margin-top:24px}
       const missingCitations = expectedCitations !== (data.html.match(/class="appendix-citation"/g) || []).length;
       replaceReport(/role="tablist"/.test(data.html) || missingGroup || missingCurves || missingDiagram || missingFlows || unformatted || missingAppendix || missingMain || missingObjective || missingProgress || missingLists || missingCitations ? legacyBody(data.state) : data.html);
       interactiveVisuals(data.state);
+      root.dispatchEvent(new CustomEvent('herdr:report-update',{detail:{state:data.state}}));
       root.dataset.proseLayout = 'v1';
       root.dataset.textLayout = 'lists-v2';
       root.dataset.groupLayout = 'v3';
@@ -1408,12 +1508,14 @@ figure[id]{scroll-margin-top:24px}
       window.HerdrReview.report(data.state, location.pathname.split('/task/')[0], data.review);
       document.title = data.state.title;
       if (previousHistory && root.querySelector('#history-items')) {
-        root.querySelector('#history-items').innerHTML = previousHistory;
+        if (root.querySelector('#history-items').innerHTML !== previousHistory)
+          root.querySelector('#history-items').innerHTML = previousHistory;
         root.querySelector('#refresh-history').hidden = false;
       } else { cursor = null; historyLoaded = false; }
       open.forEach(id => { const node = document.getElementById(id); if (node) node.open = true; });
       showAnchor();
-      if (focused && document.getElementById(focused)) document.getElementById(focused).focus({preventScroll:true});
+      if (focusedNode?.isConnected) focusedNode.focus?.({preventScroll:true});
+      else if (focused && document.getElementById(focused)) document.getElementById(focused).focus({preventScroll:true});
       scrollTo(0, y);
       document.querySelector('#update-indicator').textContent = 'Updated';
     } catch (_) {

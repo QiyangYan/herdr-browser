@@ -26,7 +26,7 @@ dashboard with sample records. The fixed v0 installer below does not include
 this later addition.
 [Open the interactive example](https://qiyangyan.github.io/herdr-browser/dashboard.html).
 [See the visual change summary](https://qiyangyan.github.io/herdr-browser/dashboard-update.html).
-[See how dashboard refresh preserves your place](https://qiyangyan.github.io/herdr-browser/dashboard-refresh.html).
+[See how live report updates preserve your place](https://qiyangyan.github.io/herdr-browser/dashboard-refresh.html).
 
 | Read | Act |
 | --- | --- |

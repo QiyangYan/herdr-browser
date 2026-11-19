@@ -394,7 +394,25 @@ class NativeTests(unittest.TestCase):
         self.window.store.save_link(self.window.key, url, state["title"], "Task pages")
         self.window.open_terminal_url(url, self.window.key)
         pump(.5)
-        self.javascript('document.querySelector("#full-results").open = true; scrollTo(0,400); "ready"')
+        self.javascript("""(() => {
+          document.querySelector("#full-results").open = true;
+          window.retained = {
+            work:document.querySelector('#current-work'),
+            curve:document.querySelector('.learning-curve'),
+            holder:document.querySelector('.ic-holder'),
+            stage:document.querySelector('.ic-stage'),
+            input:document.querySelector('.ic-min'),
+            ranges:document.querySelector('.ic-range-controls'),
+            results:document.querySelector('#full-results'), disconnected:0
+          };
+          retained.ranges.open = true;
+          retained.input.value = '7.25'; retained.input.focus({preventScroll:true});
+          new MutationObserver(records => {
+            for (const record of records) for (const node of record.removedNodes)
+              if (node === retained.curve || node.contains?.(retained.curve)) retained.disconnected++;
+          }).observe(document.querySelector('#task-content'),{childList:true,subtree:true});
+          scrollTo(0,400); return 'ready';
+        })()""")
         position = float(self.javascript("String(scrollY)"))
         view, page = self.window.view, self.window.active_page
         updated_figure = dict(figure, values=[{"label": "Fixture", "value": 2, "note": "Synthetic fixture"}])
@@ -409,6 +427,15 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.javascript("String(document.querySelector('#full-results').open)"), "true")
         self.assertEqual(self.javascript("document.querySelector('.bar-value').textContent"), "2 / 2")
         self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-series circle').length)"), "2")
+        self.assertEqual(self.javascript("""String(
+          retained.work === document.querySelector('#current-work') &&
+          retained.curve === document.querySelector('.learning-curve') &&
+          retained.holder === document.querySelector('.ic-holder') &&
+          retained.stage === document.querySelector('.ic-stage') &&
+          retained.ranges.open && retained.input === document.activeElement &&
+          retained.input.value === '7.25' && retained.disconnected === 0 &&
+          retained.results === document.querySelector('#full-results'))"""), "true",
+                         "New measurements must preserve the chart, controls, draft input and open sections")
         self.assertAlmostEqual(float(self.javascript("String(scrollY)")), position, delta=2)
         self.assertEqual(len(self.window.web_holder.get_children()), 1)
         self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
@@ -512,6 +539,38 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.javascript("document.querySelector('#task-content').dataset.revision"), "2")
         self.assertAlmostEqual(float(self.javascript("String(scrollY)")), position, delta=2)
         self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "3")
+
+    def test_report_refresh_adds_removes_and_reorders_rows_and_sections(self):
+        reports = self.window.report_server.reports
+        table = dict(title="Recorded checks", columns=["Check", "Result"],
+                     rows=[["A", "Initial"], ["B", "Initial"]], caption="Synthetic records.")
+        reports.update(self.window.key, {
+            "title": "Structure fixture", "summary": "First snapshot", "tables": [table],
+            "sections": [{"id": "old-record", "title": "Earlier record", "text": "Old detail"}],
+        }, goal="structure")
+        self.window.home()
+        pump(.8)
+        self.javascript("""window.rowB = document.querySelector('figure.comparison tbody').children[1];
+          window.reportHeader = document.querySelector('#overview'); 'ready'""")
+        reports.update(self.window.key, {
+            "summary": "New snapshot",
+            "tables": [dict(table, rows=[["B", "Updated"], ["C", "Added"], ["A", "Retained"]])],
+            "sections": [{"id": "new-record", "title": "Current record", "text": "New detail"}],
+        }, goal="structure")
+        pump(3.4)
+        self.assertEqual(self.javascript("String(reportHeader===document.querySelector('#overview'))"), "true")
+        self.assertEqual(self.javascript("String(rowB===document.querySelector('figure.comparison tbody').firstElementChild)"), "true")
+        self.assertEqual(self.javascript("JSON.stringify([...document.querySelectorAll('figure.comparison tbody tr')].map(row=>row.textContent))"),
+                         '["BUpdated","CAdded","ARetained"]')
+        self.assertEqual(self.javascript("String(!document.querySelector('#old-record') && !!document.querySelector('#new-record'))"), "true")
+        self.assertEqual(self.javascript("String(document.querySelectorAll('figure.comparison tr[data-diagram-bound]').length)"), "3")
+        self.javascript("document.querySelector('figure.comparison tbody').children[1].focus(); 'focused'")
+        self.assertIn("Added", self.javascript("document.querySelector('figure.comparison > .ic-readout').textContent"))
+        reports.update(self.window.key, {"tables": [dict(table, rows=[["B", "Final"]])]}, goal="structure")
+        pump(3.3)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('figure.comparison tbody tr').length)"), "1")
+        self.assertEqual(self.javascript("String(rowB===document.querySelector('figure.comparison tbody').firstElementChild)"), "true")
+        self.assertEqual(self.javascript("rowB.textContent"), "BFinal")
 
     def test_session_index_switches_verified_task_and_reference_keeps_hub(self):
         reports = self.window.report_server.reports

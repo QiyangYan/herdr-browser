@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Steady dashboard refresh</title><style>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Steady report refresh</title><style>
 *{box-sizing:border-box}[hidden]{display:none!important}
 body{margin:0;background:#f7f7f9;color:#272d36;font:19px/1.6 system-ui}
 strong{font-weight:700}
@@ -166,30 +166,31 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 }
 </style></head><body><main>
 <p><a href="https://github.com/QiyangYan/herdr-browser">Back to Herdr Browser</a></p>
-<h1>Steady dashboard refresh</h1>
-<p><strong>Implemented and verified:</strong> new report data no longer rebuilds the session dashboard.</p>
-<p class="status">Recorded 2026-11-19T08:40:13+00:00</p>
-<figure class="flow-diagram"><h2>New data updates the existing dashboard</h2><ol class="flow-steps"><li><strong>Saved data changes</strong><span>The existing report and dashboard polls detect the update.</span></li><li><strong>Keep the dashboard</strong><span>Its rows, history and controls stay mounted.</span></li><li><strong>Change the affected fields</strong><span>New status, text and timestamps appear in place.</span></li></ol><figcaption>Arrows show the update sequence. Polling continues at its existing cadence.</figcaption></figure>
-<h2>Why the dashboard could flash</h2>
-<p>A report update removed and recreated the dashboard. A timestamp-only dashboard update also replaced every row.
-A chart nested inside a comparison layout could trigger an unnecessary report rebuild.</p>
-<h2>What stays steady</h2>
-<p>Report updates keep the dashboard connected. Dashboard updates change fields within stable rows,
-and chart detection recognizes nested charts. Open history and focused controls survive updates.</p>
-<p><strong>Limit:</strong> a changed row can naturally grow or shrink. Saved status still describes recorded work;
-it does not establish whether an agent process is alive.</p>
+<h1>Steady report refresh</h1>
+<p><strong>Implemented and verified:</strong> new report data updates sections and charts in place.</p>
+<p class="status">Recorded 2026-11-19T09:40:52+00:00</p>
+<figure class="flow-diagram"><h2>Update the report without rebuilding its view</h2><ol class="flow-steps"><li><strong>Saved data changes</strong><span>The existing report and dashboard polls detect the update.</span></li><li><strong>Keep sections and controls</strong><span>Preserve the report, chart layout, open details and current inputs.</span></li><li><strong>Update changed content</strong><span>Refresh text, status and measured curves inside the existing view.</span></li></ol><figcaption>Arrows show the update sequence. Polling continues at its existing cadence.</figcaption></figure>
+<h2>The first fix covered only the dashboard</h2>
+<p>The dashboard stayed mounted, but new measurements still replaced the surrounding report and plots.
+That remaining refresh path could interrupt the view.</p>
+<h2>Preserve the whole report while data changes</h2>
+<p>The renderer compares new publisher content with the previous snapshot. Unchanged sections stay mounted;
+changed fields and measured curves update inside their existing containers. Chart controls retain focus and unfinished range edits.</p>
+<p><strong>Limit:</strong> longer text can naturally change a section's height. A changed chart structure, such as adding a series,
+may rebuild that chart's controls. Saved status is still a recorded observation.</p>
 <p><strong>Next action:</strong> use the updated source. The fixed v0 release predates this dashboard feature.</p>
 <details><summary>Verification and design choices</summary>
-<p>77 unit tests and 42 native UI tests passed, including repeated refreshes with nested charts, changed statuses, open history, keyboard focus and scroll. Desktop and 375 px browser checks passed.</p>
-<p>Disabling refresh would hide new results. Keeping the dashboard mounted preserves updates and interaction
+<p>77 unit tests and 43 native UI tests passed, including repeated refreshes with changed measurements, nested charts, row additions/removals, open sections, draft range input, keyboard focus and scroll. Desktop and 375 px browser checks passed.</p>
+<p>Disabling refresh would hide new results. Updating changed content in place preserves updates and interaction
 without changing the server API or stored records.</p>
-<p>Only dashboard content is updated in place. Other report sections retain their existing refresh behavior.</p>
+<p>Recorded-snapshot replay also retained the comparison layout, plot and controls through five consecutive updates, with no plot-container removals. Native tests verify new data arrives and structural additions/removals work.</p>
 </details>
 <details><summary>Version history</summary>
 <ul>
 <li><strong>v0:</strong> original release, <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li>
 <li><strong>Shared dashboard:</strong> <code>e998eeeb10b32e4a03fd47716536425bba77df75</code>.</li>
-<li><strong>Refresh fix:</strong> Source commit: <code>3ea97d64c642ae6925e7e81da7d4151d517f16dd</code>.</li>
+<li><strong>Dashboard-only fix:</strong> <code>3ea97d64c642ae6925e7e81da7d4151d517f16dd</code>. Its focused check passed, but flashing remained elsewhere in the report.</li>
+<li><strong>Report-wide refresh:</strong> Uncommitted working-tree changes.</li>
 </ul>
 </details>
 </main></body></html><script id="herdr-figure-inspection">/* Portable measured-curve renderer. No external libraries or inferred timestamps. */
@@ -263,6 +264,10 @@ without changing the server API or stored records.</p>
   }
   window.InteractiveCurve = {
     mount(holder, chart, key) {
+      if (holder._updateCurve?.(chart, key)) return;
+      holder._interactiveCleanup?.();
+      holder.querySelectorAll('.ic-metric-chart').forEach(inner => inner._interactiveCleanup?.());
+      holder._updateCurve = null;
       // Preserve saved selections when the report adds the second state student.
       if(chart.title==='Full training loss · state students')try{
         const destination='interactive-curve:'+key, previous='interactive-curve:'+key.replace('Full training loss · state students','Full training loss · teacher-identical student');
@@ -320,6 +325,12 @@ without changing the server API or stored records.</p>
           }
           render();
         });
+        const metricSchema = value => JSON.stringify([value.follows_table, value.metrics?.map(m =>
+          [m.key, m.label, m.series.some(s => s.resume_of)])]);
+        holder._updateCurve = (next, nextKey) => {
+          if (nextKey !== key || metricSchema(next) !== metricSchema(chart)) return false;
+          chart = next; render(); return true;
+        };
         render();
         return;
       }
@@ -696,6 +707,20 @@ without changing the server API or stored records.</p>
           if(holder.isConnected&&Math.abs(holder.getBoundingClientRect().width-lastWidth)>.5)draw();
         },100);
       };
+      const schema = value => JSON.stringify([
+        value.axes || [{key:'x', label:value.x_label || 'Optimizer updates', divisor:1}],
+        value.y_label, value.metricKey, value.log, value.follows_table,
+        value.series.map(s => [s.label, s.color]), !!value.metrics?.length
+      ]);
+      holder._updateCurve = (next, nextKey) => {
+        if (nextKey !== key || schema(next) !== schema(chart)) return false;
+        chart = next;
+        for (const series of chart.series) {
+          const label = legendButtons.get(series.label)?.lastChild;
+          if (label) label.nodeValue = series.label + (series.points.length ? '' : ' · no measurement');
+        }
+        draw(); return true;
+      };
       const observer=new ResizeObserver(resize);observer.observe(holder);
       // Repeated live renders must release old observers.
       holder._interactiveCleanup?.();holder._interactiveCleanup=()=>observer.disconnect();
@@ -711,13 +736,18 @@ without changing the server API or stored records.</p>
       });
       root.querySelectorAll('figure').forEach(figure=>{
         const nodes=[...figure.querySelectorAll('.node,.comparison-node,.flow-step,.flow-steps li,.clarity-flow li')];
-        if(!nodes.length||figure.dataset.interactiveDiagram)return;
+        if(!nodes.length)return;
         figure.dataset.interactiveDiagram='true';
-        const hint=document.createElement('p');hint.className='ic-readout';
-        hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
-        const caption=figure.querySelector('figcaption');figure.insertBefore(hint,caption);
+        let hint=figure.querySelector(':scope > .ic-readout');
+        const caption=figure.querySelector('figcaption');
+        if(!hint){
+          hint=document.createElement('p');hint.className='ic-readout';
+          hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
+          figure.insertBefore(hint,caption);
+        }
         for(const node of nodes){
           node.tabIndex=0;node.title=node.dataset.detail||(node.innerText||node.textContent).trim().replace(/\s+/g,' ');
+          if(node.dataset.diagramBound)continue;node.dataset.diagramBound='true';
           const show=()=>{
             nodes.forEach(n=>n.style.outline='');
             node.style.outline='2px solid #397fb7';

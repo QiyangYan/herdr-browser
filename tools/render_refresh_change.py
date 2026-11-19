@@ -1,4 +1,4 @@
-"""Portable explanation of the dashboard refresh fix, using no session data."""
+"""Portable explanation of the report refresh fix, using no session data."""
 import argparse
 import datetime
 from pathlib import Path
@@ -16,48 +16,49 @@ def render(commit="", verified=False):
         raise ValueError("Use an actual full commit ID.")
     version = f"Source commit: <code>{commit}</code>." if commit else "Uncommitted working-tree changes."
     status = "Implemented and verified" if verified else "Implemented; validation in progress"
-    checks = ("77 unit tests and 42 native UI tests passed, including repeated refreshes "
-              "with nested charts, changed statuses, open history, keyboard focus and scroll. "
+    checks = ("77 unit tests and 43 native UI tests passed, including repeated refreshes "
+              "with changed measurements, nested charts, row additions/removals, open sections, draft range input, keyboard focus and scroll. "
               "Desktop and 375 px browser checks passed." if verified else
               "Native browser regression and installed-page verification are pending.")
     visual = visual_content({"flows": [dict(
-        title="New data updates the existing dashboard",
+        title="Update the report without rebuilding its view",
         steps=[dict(title="Saved data changes", text="The existing report and dashboard polls detect the update."),
-               dict(title="Keep the dashboard", text="Its rows, history and controls stay mounted."),
-               dict(title="Change the affected fields", text="New status, text and timestamps appear in place.")],
+               dict(title="Keep sections and controls", text="Preserve the report, chart layout, open details and current inputs."),
+               dict(title="Update changed content", text="Refresh text, status and measured curves inside the existing view.")],
         caption="Arrows show the update sequence. Polling continues at its existing cadence."
     )]})
     body = f"""
 <p><a href="https://github.com/QiyangYan/herdr-browser">Back to Herdr Browser</a></p>
-<h1>Steady dashboard refresh</h1>
-<p><strong>{status}:</strong> new report data no longer rebuilds the session dashboard.</p>
+<h1>Steady report refresh</h1>
+<p><strong>{status}:</strong> new report data updates sections and charts in place.</p>
 <p class="status">Recorded {datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}</p>
 {visual}
-<h2>Why the dashboard could flash</h2>
-<p>A report update removed and recreated the dashboard. A timestamp-only dashboard update also replaced every row.
-A chart nested inside a comparison layout could trigger an unnecessary report rebuild.</p>
-<h2>What stays steady</h2>
-<p>Report updates keep the dashboard connected. Dashboard updates change fields within stable rows,
-and chart detection recognizes nested charts. Open history and focused controls survive updates.</p>
-<p><strong>Limit:</strong> a changed row can naturally grow or shrink. Saved status still describes recorded work;
-it does not establish whether an agent process is alive.</p>
+<h2>The first fix covered only the dashboard</h2>
+<p>The dashboard stayed mounted, but new measurements still replaced the surrounding report and plots.
+That remaining refresh path could interrupt the view.</p>
+<h2>Preserve the whole report while data changes</h2>
+<p>The renderer compares new publisher content with the previous snapshot. Unchanged sections stay mounted;
+changed fields and measured curves update inside their existing containers. Chart controls retain focus and unfinished range edits.</p>
+<p><strong>Limit:</strong> longer text can naturally change a section's height. A changed chart structure, such as adding a series,
+may rebuild that chart's controls. Saved status is still a recorded observation.</p>
 <p><strong>Next action:</strong> use the updated source. The fixed v0 release predates this dashboard feature.</p>
 <details><summary>Verification and design choices</summary>
 <p>{checks}</p>
-<p>Disabling refresh would hide new results. Keeping the dashboard mounted preserves updates and interaction
+<p>Disabling refresh would hide new results. Updating changed content in place preserves updates and interaction
 without changing the server API or stored records.</p>
-<p>Only dashboard content is updated in place. Other report sections retain their existing refresh behavior.</p>
+<p>Recorded-snapshot replay also retained the comparison layout, plot and controls through five consecutive updates, with no plot-container removals. Native tests verify new data arrives and structural additions/removals work.</p>
 </details>
 <details><summary>Version history</summary>
 <ul>
 <li><strong>v0:</strong> original release, <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li>
 <li><strong>Shared dashboard:</strong> <code>e998eeeb10b32e4a03fd47716536425bba77df75</code>.</li>
-<li><strong>Refresh fix:</strong> {version}</li>
+<li><strong>Dashboard-only fix:</strong> <code>3ea97d64c642ae6925e7e81da7d4151d517f16dd</code>. Its focused check passed, but flashing remained elsewhere in the report.</li>
+<li><strong>Report-wide refresh:</strong> {version}</li>
 </ul>
 </details>
 """
     (ROOT / "docs/dashboard-refresh.html").write_text(enhance_report(
-        document("Steady dashboard refresh", body),
+        document("Steady report refresh", body),
         "https://github.com/QiyangYan/herdr-browser", "Source repository"))
 
 

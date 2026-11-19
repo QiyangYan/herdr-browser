@@ -69,6 +69,10 @@
   }
   window.InteractiveCurve = {
     mount(holder, chart, key) {
+      if (holder._updateCurve?.(chart, key)) return;
+      holder._interactiveCleanup?.();
+      holder.querySelectorAll('.ic-metric-chart').forEach(inner => inner._interactiveCleanup?.());
+      holder._updateCurve = null;
       // Preserve saved selections when the report adds the second state student.
       if(chart.title==='Full training loss · state students')try{
         const destination='interactive-curve:'+key, previous='interactive-curve:'+key.replace('Full training loss · state students','Full training loss · teacher-identical student');
@@ -126,6 +130,12 @@
           }
           render();
         });
+        const metricSchema = value => JSON.stringify([value.follows_table, value.metrics?.map(m =>
+          [m.key, m.label, m.series.some(s => s.resume_of)])]);
+        holder._updateCurve = (next, nextKey) => {
+          if (nextKey !== key || metricSchema(next) !== metricSchema(chart)) return false;
+          chart = next; render(); return true;
+        };
         render();
         return;
       }
@@ -502,6 +512,20 @@
           if(holder.isConnected&&Math.abs(holder.getBoundingClientRect().width-lastWidth)>.5)draw();
         },100);
       };
+      const schema = value => JSON.stringify([
+        value.axes || [{key:'x', label:value.x_label || 'Optimizer updates', divisor:1}],
+        value.y_label, value.metricKey, value.log, value.follows_table,
+        value.series.map(s => [s.label, s.color]), !!value.metrics?.length
+      ]);
+      holder._updateCurve = (next, nextKey) => {
+        if (nextKey !== key || schema(next) !== schema(chart)) return false;
+        chart = next;
+        for (const series of chart.series) {
+          const label = legendButtons.get(series.label)?.lastChild;
+          if (label) label.nodeValue = series.label + (series.points.length ? '' : ' · no measurement');
+        }
+        draw(); return true;
+      };
       const observer=new ResizeObserver(resize);observer.observe(holder);
       // Repeated live renders must release old observers.
       holder._interactiveCleanup?.();holder._interactiveCleanup=()=>observer.disconnect();
@@ -517,13 +541,18 @@
       });
       root.querySelectorAll('figure').forEach(figure=>{
         const nodes=[...figure.querySelectorAll('.node,.comparison-node,.flow-step,.flow-steps li,.clarity-flow li')];
-        if(!nodes.length||figure.dataset.interactiveDiagram)return;
+        if(!nodes.length)return;
         figure.dataset.interactiveDiagram='true';
-        const hint=document.createElement('p');hint.className='ic-readout';
-        hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
-        const caption=figure.querySelector('figcaption');figure.insertBefore(hint,caption);
+        let hint=figure.querySelector(':scope > .ic-readout');
+        const caption=figure.querySelector('figcaption');
+        if(!hint){
+          hint=document.createElement('p');hint.className='ic-readout';
+          hint.textContent='Hover, tap or focus a diagram step to inspect its details.';
+          figure.insertBefore(hint,caption);
+        }
         for(const node of nodes){
           node.tabIndex=0;node.title=node.dataset.detail||(node.innerText||node.textContent).trim().replace(/\s+/g,' ');
+          if(node.dataset.diagramBound)continue;node.dataset.diagramBound='true';
           const show=()=>{
             nodes.forEach(n=>n.style.outline='');
             node.style.outline='2px solid #397fb7';
