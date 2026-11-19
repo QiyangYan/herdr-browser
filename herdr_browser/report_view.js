@@ -1191,6 +1191,24 @@ figure[id]{scroll-margin-top:24px}
       cursor = null; historyLoaded = false; event.target.hidden = true; loadHistory();
     }
   });
+  function replaceReport(html) {
+    const content = document.createElement('template');
+    content.innerHTML = html;
+    const dashboard = root.querySelector(':scope > #session-dashboard');
+    if (!dashboard) { root.replaceChildren(content.content); return; }
+    // Keep the dashboard connected: removing/reinserting it loses focused
+    // controls and lets its observer rebuild it during unrelated report updates.
+    const before = document.createDocumentFragment(), after = document.createDocumentFragment();
+    const header = [...content.content.children].find(node => node.matches('header.task-overview'));
+    let passedHeader = !header;
+    for (const node of [...content.content.childNodes]) {
+      (passedHeader ? after : before).append(node);
+      if (node === header) passedHeader = true;
+    }
+    for (const node of [...root.childNodes]) if (node !== dashboard) node.remove();
+    root.insertBefore(before, dashboard);
+    root.append(after);
+  }
   async function refresh() {
     if (busy || historyBusy || document.hidden || window.getSelection()?.toString()) return;
     busy = true;
@@ -1214,7 +1232,12 @@ figure[id]{scroll-margin-top:24px}
       const oldLayout = root.querySelector('nav[role=tablist]');
       const groupUpgrade = !root.querySelector(':scope > #current-work') ||
         root.dataset.groupLayout !== 'v3';
-      const curveUpgrade = (data.state.curves || []).length !== root.querySelectorAll('#current-work > .learning-curve').length;
+      // Layout adapters may nest charts in comparison containers. Count every
+      // declared chart, including main passages and appendices, at any depth.
+      const expectedCurves = (data.state.curves || []).length +
+        [...(data.state.main_sections || []), ...data.state.sections]
+          .reduce((count, row) => count + (row.curves || []).length, 0);
+      const curveUpgrade = expectedCurves !== root.querySelectorAll('figure.learning-curve').length;
       const expectedDiagrams = Number(!!data.state.plan_diagram?.comparisons) +
         data.state.sections.filter(row => row.plan_diagram?.comparisons).length;
       const diagramUpgrade = expectedDiagrams !== root.querySelectorAll('#full-plan > .plan-diagram, .task-part > .plan-diagram').length;
@@ -1246,7 +1269,7 @@ figure[id]{scroll-margin-top:24px}
       const missingLists = !data.html.includes('<!-- report-lists-v2 -->');
       const missingGroup = !data.html.includes('<!-- report-groups-v3 -->');
       const missingCitations = expectedCitations !== (data.html.match(/class="appendix-citation"/g) || []).length;
-      root.innerHTML = /role="tablist"/.test(data.html) || missingGroup || missingCurves || missingDiagram || missingFlows || unformatted || missingAppendix || missingMain || missingObjective || missingProgress || missingLists || missingCitations ? legacyBody(data.state) : data.html;
+      replaceReport(/role="tablist"/.test(data.html) || missingGroup || missingCurves || missingDiagram || missingFlows || unformatted || missingAppendix || missingMain || missingObjective || missingProgress || missingLists || missingCitations ? legacyBody(data.state) : data.html);
       interactiveVisuals(data.state);
       root.dataset.proseLayout = 'v1';
       root.dataset.textLayout = 'lists-v2';

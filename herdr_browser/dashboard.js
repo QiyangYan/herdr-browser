@@ -6,7 +6,9 @@
   const live = root.dataset.live !== 'false';
   const initial = document.getElementById('herdr-dashboard-data');
   let state = initial ? JSON.parse(initial.textContent) : null;
-  let busy = false, changed = false, historyOpen = false, signature = '', host;
+  let busy = false, changed = false, signature = '', host, ui;
+  const rows = new Map(), archived = new Map();
+  const columns = ['Agent', 'Task', 'Status', 'Last updated', 'Needs your help'];
   const terminal = new Set(['complete', 'stopped']);
   const labels = {preparing:'Preparing', running:'Running', waiting:'Waiting',
     complete:'Complete', error:'Error', stopped:'Stopped', unknown:'Unknown'};
@@ -33,6 +35,7 @@
     .session-dashboard button:disabled{opacity:.6;cursor:wait}
     .session-dashboard :focus-visible{outline:3px solid #2263bd;outline-offset:3px}
     .session-dashboard .sd-remove{display:block;margin-top:9px}
+    .session-dashboard [hidden]{display:none!important}
     .session-dashboard .sd-history{margin-top:20px;border-top:1px solid #cfd8e3;padding-top:14px}
     .session-dashboard summary{font-weight:650;cursor:pointer}
     .session-dashboard .sd-history-item{padding:15px 0;border-bottom:1px solid #cfd8e3}
@@ -63,11 +66,6 @@
   function reference(row) {
     return `Subagent: ${row.agent_id || 'Not recorded'}\nTask: ${row.task}\nTask ID: ${row.task_id || row.id}\nReport: ${row.report_url || 'Not recorded'}`;
   }
-  function link(row) {
-    const url = safeURL(row.report_url);
-    if (!url) return make('span', row.task);
-    const el = make('a', row.task); el.href = url; return el;
-  }
   function age(raw) {
     const delta = Date.now() - Date.parse(raw);
     if (!Number.isFinite(delta)) return 'Time not recorded';
@@ -77,13 +75,19 @@
       minutes < 1440 ? `${Math.floor(minutes / 60)} h ${minutes % 60} min ago` :
       `${Math.floor(minutes / 1440)} days ago`;
   }
-  function time(raw) {
-    const box = make('span');
-    if (!raw || !Number.isFinite(Date.parse(raw))) return make('span', 'Not recorded');
-    const el = make('time', new Date(raw).toISOString().slice(0,19).replace('T',' ') + ' UTC');
+  function time(raw, box = make('span')) {
+    if (box.dataset.timestamp === (raw || '')) return box;
+    box.dataset.timestamp = raw || '';
+    if (!raw || !Number.isFinite(Date.parse(raw))) { box.textContent = 'Not recorded'; return box; }
+    let el = box.querySelector('time');
+    if (!el) { el = make('time'); box.replaceChildren(el); }
+    el.textContent = new Date(raw).toISOString().slice(0,19).replace('T',' ') + ' UTC';
     el.dateTime = raw; el.title = raw; el.tabIndex = 0;
-    box.append(el);
-    if (live) { const a = make('span', age(raw), 'sd-age'); a.dataset.recorded = raw; box.append(a); }
+    if (live) {
+      let a = box.querySelector('.sd-age');
+      if (!a) { a = make('span', undefined, 'sd-age'); box.append(a); }
+      a.textContent = age(raw); a.dataset.recorded = raw;
+    }
     return box;
   }
   function notice(text, error=false) {
@@ -120,6 +124,108 @@
       field.focus(); field.select(); button.textContent = 'Select and copy reference';
     }
   }
+  function text(node, value) {
+    if (node.textContent !== value) node.textContent = value;
+  }
+  function taskLink(container, row) {
+    const url = safeURL(row.report_url), tag = url ? 'A' : 'SPAN';
+    let node = container.firstElementChild;
+    if (node?.tagName !== tag) { node = make(tag.toLowerCase()); container.replaceChildren(node); }
+    text(node, row.task);
+    if (url && node.getAttribute('href') !== url) node.href = url;
+  }
+  function ordered(container, records, cache, create, update) {
+    const ids = new Set(records.map(row => row.id));
+    for (const [id, view] of cache) if (!ids.has(id)) { view.node.remove(); cache.delete(id); }
+    let position = container.firstElementChild;
+    for (const row of records) {
+      let view = cache.get(row.id);
+      if (!view) { view = create(row); cache.set(row.id, view); }
+      const signature = JSON.stringify(row) + ':' + state.persistent;
+      if (signature !== view.signature) { view.row = row; update(view, row); view.signature = signature; }
+      if (view.node !== position) container.insertBefore(view.node, position);
+      position = view.node.nextElementSibling;
+    }
+  }
+  function workRow(row) {
+    const node = make('tr'); node.dataset.dashboardId = row.id;
+    const cells = columns.map(label => { const td = make('td'); td.dataset.label = label; node.append(td); return td; });
+    const view = {node, cells, name:make('strong'), status:make('span', undefined, 'sd-status'),
+      label:make('span'), summary:make('p', undefined, 'sd-detail'), stamp:make('span'), help:make('span')};
+    const dot = make('span', undefined, 'sd-dot'); dot.setAttribute('aria-hidden','true');
+    view.status.append(dot, view.label);
+    cells[0].append(view.name); cells[2].append(view.status, view.summary);
+    cells[3].append(view.stamp); cells[4].append(view.help);
+    if (live) {
+      view.remove = make('button', 'Remove', 'sd-remove'); view.remove.type = 'button';
+      view.remove.title = 'Move completed work to dashboard history';
+      view.remove.dataset.dashboardFocus = 'remove:' + row.id;
+      view.remove.addEventListener('click', () => change(view.row, 'archive'));
+      cells[0].append(view.remove);
+    }
+    return view;
+  }
+  function updateWork(view, row) {
+    text(view.name, row.agent_label);
+    view.name.title = row.agent_id ? 'Subagent: ' + row.agent_id : 'Subagent identity not recorded';
+    taskLink(view.cells[1], row);
+    view.status.dataset.status = row.status; text(view.label, labels[row.status] || 'Unknown');
+    text(view.summary, row.summary || ''); view.summary.hidden = !row.summary;
+    time(row.updated_at, view.stamp);
+    text(view.help, row.needs_help || 'No request recorded.'); view.help.className = row.needs_help ? 'sd-help' : '';
+    if (view.remove) {
+      view.remove.hidden = !state.persistent || !terminal.has(row.status);
+      view.remove.setAttribute('aria-label', 'Remove ' + row.task + ' from dashboard');
+    }
+  }
+  function historyRow(row) {
+    const node = make('div', undefined, 'sd-history-item'); node.dataset.dashboardId = row.id;
+    const view = {node, task:make('span'), agent:make('p', undefined, 'sd-detail'),
+      summary:make('p', undefined, 'sd-detail'), stamp:make('span')};
+    const actions = make('div', undefined, 'sd-actions');
+    const button = make('button', 'Copy task reference'); button.type = 'button';
+    button.addEventListener('click', () => copy(view.row, node, button)); actions.append(button);
+    view.copy = button;
+    if (live) {
+      view.restore = make('button', 'Restore to dashboard'); view.restore.type = 'button';
+      view.restore.dataset.dashboardFocus = 'restore:' + row.id;
+      view.restore.addEventListener('click', () => change(view.row, 'restore')); actions.append(view.restore);
+    }
+    node.append(view.task, view.agent, view.summary, view.stamp, actions);
+    return view;
+  }
+  function updateHistory(view, row) {
+    taskLink(view.task, row); text(view.agent, 'Subagent: ' + (row.agent_id || 'Not recorded'));
+    text(view.summary, row.summary || ''); view.summary.hidden = !row.summary;
+    time(row.updated_at, view.stamp);
+    if (view.restore) view.restore.hidden = !state.persistent;
+    const field = view.node.querySelector('textarea');
+    if (field && field.value !== reference(row)) field.value = reference(row);
+  }
+  function mount() {
+    host = make('section', undefined, 'session-dashboard');
+    host.id = 'session-dashboard'; host.setAttribute('aria-labelledby','session-dashboard-title');
+    const title = make('h2', 'Session dashboard'); title.id = 'session-dashboard-title';
+    const updated = make('p', undefined, 'sd-updated'), stamp = make('span');
+    updated.append(make('strong', 'Last recorded update: '), stamp);
+    const table = make('table'); table.setAttribute('aria-label','Work in this session');
+    const head = make('thead'), hr = make('tr'), body = make('tbody');
+    for (const label of columns) { const th = make('th', label); th.scope = 'col'; hr.append(th); }
+    head.append(hr); table.append(head, body);
+    const caption = make('p',
+      'Saved reports, not a live process monitor. Green: running; yellow: preparing or waiting; grey: complete or stopped; red: error. Only explicit requests appear under “Needs your help”.', 'sd-caption');
+    const empty = make('p', 'No subagent records have been published for this task. Supporting task reports appear automatically.', 'sd-detail');
+    const details = make('details', undefined, 'sd-history'); details.id = 'dashboard-history';
+    const historyTitle = make('summary'), historyItems = make('div');
+    const noHistory = make('p', 'Completed tasks you remove will appear here.', 'sd-detail');
+    details.append(historyTitle, make('p', 'Completed work keeps its report and task reference. Restoring a row does not restart its agent.', 'sd-detail'), noHistory, historyItems);
+    const message = make('p', undefined, 'sd-notice'); message.setAttribute('role','status');
+    message.setAttribute('aria-live','polite');
+    host.append(title, updated, table, caption, empty);
+    if (!live) host.append(make('p', 'Saved snapshot. Open the main task to change dashboard history.', 'sd-detail'));
+    host.append(details, message);
+    ui = {stamp, body, empty, historyTitle, noHistory, historyItems};
+  }
   function render() {
     if (!state) return;
     // Legacy publishers can keep sending their table; it supplies this dashboard.
@@ -127,82 +233,20 @@
       if (figure.querySelector('h2,h3,h4')?.textContent.trim().toLowerCase() === 'subagent dashboard')
         figure.hidden = true;
     }
-    if (!host?.isConnected) {
-      host = make('section', undefined, 'session-dashboard');
-      host.id = 'session-dashboard'; host.setAttribute('aria-labelledby','session-dashboard-title');
+    if (!host) mount();
+    if (!host.isConnected) {
       const header = root.querySelector(':scope > header.task-overview');
       if (header) header.after(host); else root.prepend(host);
-      signature = '';
     }
     const next = JSON.stringify(state);
     if (next === signature) return;
     signature = next;
-    const focus = document.activeElement?.dataset.dashboardFocus;
-    const title = make('h2','Session dashboard'); title.id = 'session-dashboard-title';
-    const updated = make('p', undefined, 'sd-updated');
-    updated.append(make('strong', 'Last recorded update: '), time(state.updated_at));
-    const table = make('table'); table.setAttribute('aria-label','Work in this session');
-    const columns = ['Agent', 'Task', 'Status', 'Last updated', 'Needs your help'];
-    const head = make('thead'), hr = make('tr');
-    for (const label of columns) { const th = make('th', label); th.scope = 'col'; hr.append(th); }
-    head.append(hr); const body = make('tbody');
-    for (const row of state.rows) {
-      const tr = make('tr'); tr.dataset.dashboardId = row.id;
-      const cells = columns.map(label => { const td = make('td'); td.dataset.label = label; tr.append(td); return td; });
-      const name = make('strong', row.agent_label);
-      name.title = row.agent_id ? 'Subagent: ' + row.agent_id : 'Subagent identity not recorded';
-      cells[0].append(name); cells[1].append(link(row));
-      const status = make('span', undefined, 'sd-status'); status.dataset.status = row.status;
-      const dot = make('span', undefined, 'sd-dot'); dot.setAttribute('aria-hidden','true');
-      status.append(dot, document.createTextNode(labels[row.status] || 'Unknown'));
-      cells[2].append(status);
-      if (row.summary) cells[2].append(make('p', row.summary, 'sd-detail'));
-      cells[3].append(time(row.updated_at));
-      cells[4].append(make('span', row.needs_help || 'No request recorded.', row.needs_help ? 'sd-help' : ''));
-      if (live && state.persistent && terminal.has(row.status)) {
-        const remove = make('button', 'Remove', 'sd-remove'); remove.type = 'button';
-        remove.title = 'Move completed work to dashboard history';
-        remove.setAttribute('aria-label','Remove ' + row.task + ' from dashboard');
-        remove.dataset.dashboardFocus = 'remove:' + row.id;
-        remove.addEventListener('click', () => change(row, 'archive')); cells[0].append(remove);
-      }
-      body.append(tr);
-    }
-    table.append(head, body);
-    const caption = make('p',
-      'Saved reports, not a live process monitor. Green: running; yellow: preparing or waiting; grey: complete or stopped; red: error. Only explicit requests appear under “Needs your help”.',
-      'sd-caption');
-    const details = make('details', undefined, 'sd-history'); details.id = 'dashboard-history';
-    details.open = historyOpen; details.addEventListener('toggle', () => { historyOpen = details.open; });
-    details.append(make('summary', `Dashboard history (${state.history.length})`),
-      make('p', 'Completed work keeps its report and task reference. Restoring a row does not restart its agent.', 'sd-detail'));
-    if (!state.history.length) details.append(make('p','Completed tasks you remove will appear here.','sd-detail'));
-    for (const row of state.history) {
-      const item = make('div', undefined, 'sd-history-item'); item.append(link(row));
-      item.append(make('p','Subagent: ' + (row.agent_id || 'Not recorded'), 'sd-detail'));
-      if (row.summary) item.append(make('p', row.summary, 'sd-detail'));
-      item.append(time(row.updated_at));
-      const actions = make('div', undefined, 'sd-actions');
-      const button = make('button','Copy task reference'); button.type = 'button';
-      button.addEventListener('click', () => copy(row, item, button)); actions.append(button);
-      if (live && state.persistent) {
-        const restore = make('button','Restore to dashboard'); restore.type = 'button';
-        restore.dataset.dashboardFocus = 'restore:' + row.id;
-        restore.addEventListener('click', () => change(row,'restore')); actions.append(restore);
-      }
-      item.append(actions); details.append(item);
-    }
-    const message = make('p', undefined, 'sd-notice'); message.setAttribute('role','status');
-    message.setAttribute('aria-live','polite');
-    const parts = [title, updated, table, caption];
-    if (!state.rows.some(row => row.agent_id || row.source === 'saved table' || row.source === 'saved subagent report'))
-      parts.push(make('p','No subagent records have been published for this task. Supporting task reports appear automatically.', 'sd-detail'));
-    if (!live) parts.push(make('p','Saved snapshot. Open the main task to change dashboard history.', 'sd-detail'));
-    parts.push(details, message); host.replaceChildren(...parts);
-    if (focus) {
-      const target = [...host.querySelectorAll('[data-dashboard-focus]')].find(el => el.dataset.dashboardFocus === focus);
-      if (target) target.focus({preventScroll:true});
-    }
+    time(state.updated_at, ui.stamp);
+    ordered(ui.body, state.rows, rows, workRow, updateWork);
+    ordered(ui.historyItems, state.history, archived, historyRow, updateHistory);
+    text(ui.historyTitle, `Dashboard history (${state.history.length})`);
+    ui.noHistory.hidden = state.history.length > 0;
+    ui.empty.hidden = state.rows.some(row => row.agent_id || row.source === 'saved table' || row.source === 'saved subagent report');
   }
   async function refresh() {
     if (busy || changed || document.hidden) return;

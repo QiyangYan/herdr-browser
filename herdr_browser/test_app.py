@@ -446,6 +446,73 @@ class NativeTests(unittest.TestCase):
         self.assertIs(self.window.view, view)
         self.assertEqual(len(self.window.store.task(self.window.key)["links"]), 1)
 
+    def test_dashboard_refresh_keeps_controls_and_nested_charts_stable(self):
+        from .dashboard import Dashboard
+        reports = self.window.report_server.reports
+        curve = {"title": "Recorded fixture", "caption": "Synthetic test values.",
+                 "x_label": "Updates", "y_label": "Score", "x_maximum": 2, "y_maximum": 1, "gap": 1,
+                 "series": [{"label": "Fixture", "points": [{"x": 1, "y": .5}]}]}
+        reports.update(self.window.key, {
+            "title": "Refresh fixture", "summary": "Initial report", "curves": [curve],
+            "sections": [{"id": "evidence", "title": "Evidence", "text": "Test records.",
+                          "curves": [dict(curve, title="Appendix fixture")]}],
+            "main_sections": [{"title": "Recorded result", "text": "See [evidence](#evidence).",
+                               "sections": ["evidence"], "curves": [dict(curve, title="Main fixture")]}],
+        }, goal="refresh")
+        dashboard = Dashboard(reports)
+        record = dict(task="Keyboard checks", agent_id="/fixture/checks", agent_label="Checks",
+                      status="complete", summary="Initial result", updated_at="2026-11-01T10:00:00Z")
+        dashboard.upsert(self.window.key, "refresh", "checks", record)
+        dashboard.upsert(self.window.key, "refresh", "archived", dict(record, task="Earlier checks"))
+        dashboard.change(self.window.key, "refresh", "archived", "archive")
+        self.window.home()
+        pump(.8)
+        self.javascript("""(() => {
+          const root = document.querySelector('#task-content');
+          const chart = root.querySelector('#current-work > .learning-curve');
+          const wrapper = document.createElement('div'); chart.before(wrapper); wrapper.append(chart);
+          // A 200 response can also carry a review update with the same report
+          // revision. Exercise that path instead of relying only on 304s.
+          const original = window.fetch.bind(window);
+          window.fetch = (url, options) => String(url).endsWith('/data') ?
+            original(url, {cache:'no-store'}) : original(url, options);
+          window.kept = {header:root.querySelector('header'),
+            host:document.querySelector('#session-dashboard'),
+            row:document.querySelector('[data-dashboard-id="checks"]'),
+            history:document.querySelector('#dashboard-history'),
+            button:document.querySelector('#dashboard-history button'),
+            disconnected:0};
+          new MutationObserver(records => {
+            for (const record of records) for (const node of record.removedNodes)
+              if (node === kept.host || node.contains?.(kept.host)) kept.disconnected++;
+          }).observe(root,{childList:true,subtree:true});
+          kept.history.open = true; kept.button.focus({preventScroll:true});
+          kept.host.scrollIntoView();
+          return 'ready';
+        })()""")
+        position = float(self.javascript("String(scrollY)"))
+        pump(3.3)
+        self.assertEqual(self.javascript("String(kept.header === document.querySelector('#task-content header'))"), "true",
+                         "A nested chart must not trigger a same-revision rebuild")
+        reports.update(self.window.key, {"summary": "New recorded report"}, goal="refresh")
+        dashboard.upsert(self.window.key, "refresh", "checks",
+                         dict(record, status="running", summary="New recorded result",
+                              updated_at="2026-11-01T10:01:00Z"))
+        pump(5.5)
+        stable = self.javascript("""String(
+          kept.host === document.querySelector('#session-dashboard') &&
+          kept.row === document.querySelector('[data-dashboard-id="checks"]') &&
+          kept.history === document.querySelector('#dashboard-history') &&
+          kept.history.open && kept.button === document.activeElement &&
+          kept.disconnected === 0)""")
+        self.assertEqual(stable, "true", "Refresh must preserve mounted controls, focus and open history")
+        self.assertEqual(self.javascript("kept.row.querySelector('.sd-detail').textContent"), "New recorded result")
+        self.assertEqual(self.javascript("kept.row.querySelector('.sd-status').dataset.status"), "running")
+        self.assertEqual(self.javascript("String(kept.row.querySelector('.sd-remove').hidden)"), "true")
+        self.assertEqual(self.javascript("document.querySelector('#task-content').dataset.revision"), "2")
+        self.assertAlmostEqual(float(self.javascript("String(scrollY)")), position, delta=2)
+        self.assertEqual(self.javascript("String(document.querySelectorAll('.ic-holder').length)"), "3")
+
     def test_session_index_switches_verified_task_and_reference_keeps_hub(self):
         reports = self.window.report_server.reports
         owner = self.window.key
