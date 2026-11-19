@@ -30,5 +30,27 @@
     "Made Firefox hostname exceptions configurable through HERDR_BROWSER_FIREFOX_HOSTS.",
     "Added a release installer and public documentation."
   ],
-  "client_sha256": "402641b68cf268bfb7e31a3249ebae573c85994f9d5b6b08dc4da3b5a55104ee"
+  "client_sha256": "402641b68cf268bfb7e31a3249ebae573c85994f9d5b6b08dc4da3b5a55104ee",
+  "release_source_commit": "ad2114158eca31ae335cd5029575d1351d322496",
+  "public_runtime_sha256": {
+    "__init__.py": "a616b4f6820441cf1e20c703066f25ef0b1c7672f68d5ebd2e429ff8f23203fa",
+    "__main__.py": "935a1c1166b0c1ea35a82256345000bf2c73ded718d77773bc27a71ecce28f7d",
+    "app.py": "2e3ac29f7cf4b258b2547fdbeb2885165c1c24fb403bc0aae7a9dfc20e987f59",
+    "assets/herdr-browser.svg": "8e46634c8433e40f79e728a675e3751f3eeb78b858ecf384044fc62bc2b447d2",
+    "cli.py": "932142bce3cbd342805de6ab4d84d04831e754609a8b5599fff018c575662532",
+    "desktop.py": "d8ca126089f751fccd8f8fd39a826f5acbb3ed4c5487f5e7493211567b7f6c63",
+    "global_browser_preference.md": "56e7c9ce1c12634f3ec3608b55aba9ebd3a88b2dd8e0b2a85a41cfaaf92d3578",
+    "install.py": "280e203f1d9574eb44f1ef1fee3b5f855fa9feeccb68576ba02ac9882905610b",
+    "install_clipboard.py": "ba7048c5faecd1214d4bdd0eee77e4d1300577fc10538b862566f606b176ab8a",
+    "interactive_curve.js": "835758b2d3b9ac9e67bcd176ca3d4b46657855bd3a63328e2ebc904fd683bd11",
+    "presentation.py": "0f4a0ceea4507f6b56f60b1ae8ae3009979215156c969c407eb206648bc0474d",
+    "recency.py": "9d11ef76c950a1af39e7aae258eb81e57a706afe952c3964d1467569c6e63958",
+    "report_view.js": "f90182e597bf01c2d167d4ee091b760d84d438db5563f689acc88ed2cd831db7",
+    "reports.py": "d3922c3b459c72321705458afb7f2b91ae798a3d8e43b5db2e5081586bd8020f",
+    "review_state.js": "a69ae499d2750452b57a62e9557af8451795637f6180e7e4e206474c4b4cf5f7",
+    "router.py": "5f8a538329cfed38c0c2764148826c4e2a2c7a7c14a8e2a478a2a2de5d675d06",
+    "serve_reports.py": "da5cc162b3039ecc07761ebf47c7c212bfbddd3c15df7684af64247f39041ea6",
+    "session_view.js": "8c76548d8fac5b257168cd99288b4b9738964668f15a0a5871e91a8c3fbe0fd3",
+    "store.py": "53c4f25adab40286be809a0ff43b38cd425644e9a10bd70c1bbe9d64bf659ab7"
+  }
 }
