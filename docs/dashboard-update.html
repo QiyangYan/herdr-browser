@@ -168,7 +168,7 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 <p><a href="https://github.com/QiyangYan/herdr-browser">Back to Herdr Browser</a></p>
 <h1>Session dashboards across tasks</h1>
 <p><strong>Implemented and verified:</strong> every task Home uses the same dashboard, with its own records and persistent history.</p>
-<p class="status">Recorded 2026-11-19T03:10:54+00:00</p>
+<p class="status">Recorded 2026-11-19T03:13:35+00:00</p>
 <figure class="flow-diagram"><h2>One shared dashboard, each task&#x27;s own records</h2><ol class="flow-steps"><li><strong>Recorded work</strong><span>The main task, supporting reports and explicit subagent updates.</span></li><li><strong>Task dashboard</strong><span>Status, timestamps, report links and requests for help on every Home.</span></li><li><strong>Saved history</strong><span>Remove completed rows; restore or copy their references later.</span></li></ol><figcaption>Arrows show how saved records reach the dashboard and its history. Restoring a row does not restart work.</figcaption></figure>
 <h2>Know what needs attention</h2>
 <p>Read the latest recorded status, follow the task's report, or act on its explicit request for help. Empty sessions get a Home dashboard; unpublished subagents remain visibly unrecorded.</p>
@@ -185,7 +185,7 @@ table[data-clarity-table] td:before{content:attr(data-label) ": ";font-weight:60
 <details><summary>Design choices and version history</summary>
 <ul>
 <li><strong>Existing:</strong> v0 task-owned websites and living reports, commit <code>6e30065aacf65875251f439cd4c9612709f761c9</code>.</li>
-<li><strong>Current:</strong> shared dashboard, task-scoped SQLite history, status-publishing command and a visual README. Uncommitted working-tree changes after v0.</li>
+<li><strong>Current:</strong> shared dashboard, task-scoped SQLite history, status-publishing command and a visual README. Committed source: <code>e998eeeb10b32e4a03fd47716536425bba77df75</code>.</li>
 <li><strong>Tradeoff:</strong> explicit saved records preserve provenance but require agents to publish status. No subagent is inferred from a report title.</li>
 <li><strong>Alternative considered:</strong> copying a task-specific table would duplicate data and lose ownership. The shared renderer reads each task's own records.</li>
 <li><strong>Future release:</strong> no new binary release is claimed; the v0 tag remains fixed.</li>
